@@ -1,0 +1,7 @@
+version: "3"
+services:
+  covers:
+    build: .
+    image: mhemeryck/covers
+    volumes:
+      - ".:/app"
