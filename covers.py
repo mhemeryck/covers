@@ -3,8 +3,6 @@ import logging
 import logging.config
 import re
 import sys
-import threading
-import time
 import typing
 
 import paho.mqtt.client as mqtt
@@ -69,23 +67,13 @@ TOPIC_REGEX = re.compile(
 )
 
 
-def cleanup(topic: str, on_time: int) -> None:
-    """Shutdown the relay in a separate thread after max time"""
-    time.sleep(on_time)
-    client.publish(topic, PAYLOAD.OFF)
-
-
 def on_message_input(
     client: mqtt.Client,
     userdata: typing.Union[None, typing.Dict],
     message: mqtt.MQTTMessage,
-):
+) -> None:
     """Callback for MQTT events"""
     logger.info(f"Handle input message {message.payload} for topic {message.topic}")
-
-    # Ignore trailing edges
-    if message.payload != PAYLOAD.ON:
-        return
 
     # Match input
     match = TOPIC_REGEX.match(message.topic)
@@ -113,7 +101,7 @@ def on_message_input(
 
     # Check transitions
     if input_op == OP.OPEN and cover_state == COVER_STATE.STILL:
-        client.publish(topic, PAYLOAD.ON)
+        client.publish(topic, message.payload)
     elif input_op == OP.OPEN and cover_state == COVER_STATE.CLOSING:
         # Can't happen, just stop everything to be sure
         client.publish(topic, PAYLOAD.OFF)
@@ -126,9 +114,9 @@ def on_message_input(
         )
         client.publish(topic, PAYLOAD.OFF)
     elif input_op == OP.OPEN and cover_state == COVER_STATE.OPENING:
-        client.publish(topic, PAYLOAD.OFF)
+        client.publish(topic, message.payload)
     elif input_op == OP.CLOSE and cover_state == COVER_STATE.STILL:
-        client.publish(topic, PAYLOAD.ON)
+        client.publish(topic, message.payload)
     elif input_op == OP.CLOSE and cover_state == COVER_STATE.OPENING:
         # Can't happen, stop just to be sure
         client.publish(topic, PAYLOAD.OFF)
@@ -141,14 +129,14 @@ def on_message_input(
         )
         client.publish(topic, PAYLOAD.OFF)
     elif input_op == OP.CLOSE and cover_state == COVER_STATE.CLOSING:
-        client.publish(topic, PAYLOAD.OFF)
+        client.publish(topic, message.payload)
 
 
 def on_message_relay(
     client: mqtt.Client,
     userdata: typing.Union[None, typing.Dict],
     message: mqtt.MQTTMessage,
-):
+) -> None:
     """Callback for relay MQTT events"""
     logger.info(f"Handle relay message {message.payload} for topic {message.topic}")
 
@@ -173,20 +161,6 @@ def on_message_relay(
     elif relay_op == OP.CLOSE and message.payload == PAYLOAD.ON:
         userdata["cover_state"][cover_name] = COVER_STATE.CLOSING
 
-    # Make sure the relays don't stay on too long, in a separate fire-and-forget thread
-    if message.payload == PAYLOAD.ON:
-        topic = TOPIC_FORMAT.format(
-            base_topic=userdata["relays_base_topic"],
-            entity_type=ENTITY.RELAY,
-            name=name,
-            action=ACTION.COMMAND,
-        )
-        threading.Thread(
-            target=cleanup,
-            args=(topic, userdata["on_time"]),
-            daemon=True,
-        ).start()
-
     return
 
 
@@ -195,7 +169,7 @@ def on_connect(
     userdata: typing.Union[None, typing.Dict],
     flags: typing.Dict,
     rc: int,
-):
+) -> None:
     """Callback for when MQTT connection to broker is set up"""
     logger.info("Subscribe to all state topics ...")
     for relay_name, relay_map in userdata["config"].items():
