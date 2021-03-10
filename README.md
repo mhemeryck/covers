@@ -10,43 +10,126 @@ With [poetry]; install a local virtualenv
 
     poetry install
 
+[poetry]: https://poetry.eustace.io/
+
 ### Commands
 
 Help:
 
-    poetry run python covers.py --help
-    usage: covers.py [-h] [--mqtt_port MQTT_PORT] [--mqtt_client_id MQTT_CLIENT_ID] [--on_time ON_TIME] mqtt_host config inputs_base_topic relays_base_topic
+    usage: covers.py [-h][--mqtt_host mqtt_host] [--mqtt_base_topic_cover MQTT_BASE_TOPIC_COVER][--mqtt_base_topic_relay mqtt_base_topic_relay] config
 
     positional arguments:
-      mqtt_host             MQTT broker host
-      config                YAML config file
-      inputs_base_topic     Base topic of device connecting to
-      relays_base_topic     Relay base topic
+    config Config file mapping covers to relays
 
     optional arguments:
-      -h, --help            show this help message and exit
-      --mqtt_port MQTT_PORT
-      --mqtt_client_id MQTT_CLIENT_ID
-                            Client ID to use for MQTT
-      --on_time ON_TIME     Time in seconds the cover relays can on
-
-[poetry]: https://poetry.eustace.io/
+    -h, --help show this help message and exit
+    --mqtt_host MQTT_HOST MQTT broker host
+    --mqtt_base_topic_cover MQTT_BASE_TOPIC_COVER
+    --mqtt_base_topic_relay MQTT_BASE_TOPIC_RELAY
 
 ### Example config file
 
 The config file is supposed to be in this format:
 
     office_side:
-      open:
-        input: "3_11"
-        relay: "3_14"
-      close:
-        input: "3_12"
-        relay: "3_13"
+      open: "3_14"
+      close:"3_13"
     office_front:
-      open:
-        input: "3_09"
-        relay: "3_11"
-      close:
-        input: "3_10"
-        relay: "3_12"
+      open: "3_11"
+      close: "3_12"
+
+## homeassistant integration
+
+This application is developed to play along nicely with [home assistant MQTT cover](https://www.home-assistant.io/integrations/cover.mqtt/).
+
+A simple setup to get you going:
+
+docker-compose:
+
+    version: "3"
+    services:
+      homeassistant:
+        image: homeassistant/home-assistant
+        restart: unless-stopped
+        ports:
+          - "8123:8123"
+        volumes:
+          - .:/config
+          - /etc/localtime:/etc/localtime:ro
+        environment:
+          MQTT_BROKER: 192.168.1.2
+
+Related config file:
+
+    default_config:
+
+    mqtt:
+      broker: !env_var MQTT_BROKER
+
+    # Cover config
+    cover:
+      - platform: mqtt
+        name: "office"
+        command_topic: "homeassistant/cover/office/set"
+        state_topic: "homeassistant/cover/office/state"
+        position_topic: "homeassistant/cover/office/position"
+        set_position_topic: "covers/office/set_position"
+        device_class: shade
+        optimistic: true
+
+    # Toggle buttons
+    switch:
+      - platform: mqtt
+        name: office open
+        command_topic: "shady/input/3_09/set"
+        state_topic: "shady/input/3_09/state"
+
+      - platform: mqtt
+        name: office close
+        command_topic: "shady/input/3_10/set"
+        state_topic: "shady/input/3_10/state"
+
+    # Link toggle buttons to cover actions
+    automation:
+      - alias: Office toggle open start
+        trigger:
+          platform: state
+          entity_id: switch.office_open
+          from: "off"
+          to: "on"
+        action:
+          service: cover.open_cover
+          entity_id: cover.office
+
+      - alias: Office toggle open stop
+        trigger:
+          platform: state
+          entity_id: switch.office_open
+          from: "on"
+          to: "off"
+        action:
+          service: cover.stop_cover
+          entity_id: cover.office
+
+      - alias: Office toggle close start
+        trigger:
+          platform: state
+          entity_id: switch.office_close
+          from: "off"
+          to: "on"
+        action:
+          service: cover.close_cover
+          entity_id: cover.office
+
+      - alias: Office toggle close stop
+        trigger:
+          platform: state
+          entity_id: switch.office_close
+          from: "on"
+          to: "off"
+        action:
+          service: cover.stop_cover
+          entity_id: cover.office
+
+Notes:
+- Using cover in "optimistic" mode, since home assistant isn't clever enough to be able switch between opening and closing.
