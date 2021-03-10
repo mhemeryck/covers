@@ -1,17 +1,20 @@
 import argparse
+import asyncio
+import contextlib
+import enum
 import logging
 import logging.config
 import re
 import sys
 import typing
 
-import paho.mqtt.client as mqtt
+import asyncio_mqtt
 import yaml
 
 LOG_LEVEL = logging.INFO
 LOG_CONFIG = dict(
     version=1,
-    formatters={"default": {"format": "%(asctime)s - %(levelname)s - %(message)s"}},
+    formatters={"default": {"format": "%(asctime)s - %(levelname)s - %(name)s - %(message)s"}},
     handlers={
         "stream": {
             "class": "logging.StreamHandler",
@@ -24,294 +27,483 @@ LOG_CONFIG = dict(
 logging.config.dictConfig(LOG_CONFIG)
 logger = logging.getLogger(__name__)
 
-
-class ACTION:
-    """enum for actions"""
-
-    COMMAND = "set"
-    STATE = "state"
+TOPIC_REGEX = re.compile(
+    r"^(?P<base_topic>\w+)/(?P<entity>(input|relay|cover))/(?P<name>\w+)/(set|state)$"
+)
+TOPIC_FORMAT = "{base_topic}/{entity}/{name}/{action}"
 
 
-class OP:
-    """enum for expected operations"""
+class Entity(enum.Enum):
+    """MQTT entity"""
 
-    OPEN = "open"
-    CLOSE = "close"
-
-
-class ENTITY:
-    """enum for types of entities"""
-
-    INPUT = "input"
+    COVER = "cover"
     RELAY = "relay"
 
 
-class COVER_STATE:
-    """enum to describe what the cover is currently doing"""
+class Action(enum.Enum):
+    """Actions on MQTT topic"""
 
-    OPENING = "opening"
-    STILL = "still"
-    CLOSING = "closing"
+    COMMAND = "set"
+    STATE = "state"
+    POSITION = "position"
 
 
-class PAYLOAD:
-    """payload values"""
-
+class Payload(enum.Enum):
     ON = b"ON"
     OFF = b"OFF"
+    OPEN = b"OPEN"
+    CLOSE = b"CLOSE"
+    STOP = b"STOP"
 
 
-TOPIC_FORMAT = "{base_topic}/{entity_type}/{name}/{action}"
-TOPIC_REGEX = re.compile(
-    r"^(?P<base_topic>\w+)/(?P<entity_type>(input|relay))/(?P<name>\w+)/state$"
-)
+class Shade:
+    OPENING = "opening"
+    CLOSING = "closing"
+    STOPPED = "stopped"
 
+    OPEN = "open"
+    CLOSED = "closed"
 
-def on_message_input(
-    client: mqtt.Client,
-    userdata: typing.Union[None, typing.Dict],
-    message: mqtt.MQTTMessage,
-) -> None:
-    """Callback for MQTT events"""
-    logger.info(f"Handle input message {message.payload} for topic {message.topic}")
+    _DIRECTION_OPENING = 1
+    _DIRECTION_CLOSING = -1
+    _DIRECTION_STOPPED = 0
 
-    # Match input
-    match = TOPIC_REGEX.match(message.topic)
+    def __init__(
+        self,
+        cover: str,
+        open_relay: str,
+        close_relay: str,
+        mqtt_host: str,
+        mqtt_base_topic_cover: str,
+        mqtt_base_topic_relay: str,
+        sleep_time: float = 0.5,
+        max_time: float = 30.0,
+        max_position: int = 100,
+    ):
+        self.cover = cover
+        self.open_relay = open_relay
+        self.close_relay = close_relay
+        self._open_relay_state = False
+        self._close_relay_state = False
+        self._state = Shade.STOPPED
 
-    # Nothing found, just break off
-    if match is None:
-        return
-
-    name = match.group("name")
-    cover_name = userdata["input_map"][name]["name"]
-    relay_name = userdata["input_map"][name]["relay"]
-    input_op = userdata["input_map"][name]["op"]
-
-    # Get current state
-    cover_state = userdata["cover_state"].get(cover_name)
-    if not cover_state:
-        return
-
-    topic = TOPIC_FORMAT.format(
-        base_topic=userdata["relays_base_topic"],
-        entity_type=ENTITY.RELAY,
-        name=relay_name,
-        action=ACTION.COMMAND,
-    )
-
-    # Check transitions
-    if input_op == OP.OPEN and cover_state == COVER_STATE.STILL:
-        client.publish(topic, message.payload)
-    elif input_op == OP.OPEN and cover_state == COVER_STATE.CLOSING:
-        # Can't happen, just stop everything to be sure
-        client.publish(topic, PAYLOAD.OFF)
-        relay_name = userdata["config"][cover_name][OP.CLOSE]["relay"]
-        topic = TOPIC_FORMAT.format(
-            base_topic=userdata["relays_base_topic"],
-            entity_type=ENTITY.RELAY,
-            name=relay_name,
-            action=ACTION.COMMAND,
+        # Position tracking
+        self.position = max_position
+        self._max_time = max_time
+        self._max_position = max_position
+        self._direction = self._DIRECTION_STOPPED
+        self._direction_lock = asyncio.Lock()
+        self._sleep_time = sleep_time
+        self._increment = int(
+            round(self._max_position * self._sleep_time / self._max_time)
         )
-        client.publish(topic, PAYLOAD.OFF)
-    elif input_op == OP.OPEN and cover_state == COVER_STATE.OPENING:
-        client.publish(topic, message.payload)
-    elif input_op == OP.CLOSE and cover_state == COVER_STATE.STILL:
-        client.publish(topic, message.payload)
-    elif input_op == OP.CLOSE and cover_state == COVER_STATE.OPENING:
-        # Can't happen, stop just to be sure
-        client.publish(topic, PAYLOAD.OFF)
-        relay_name = userdata["config"][cover_name][OP.OPEN]["relay"]
-        topic = TOPIC_FORMAT.format(
-            base_topic=userdata["relays_base_topic"],
-            entity_type=ENTITY.RELAY,
-            name=relay_name,
-            action=ACTION.COMMAND,
+
+        self._open_relay_lock = asyncio.Lock()
+        self._close_relay_lock = asyncio.Lock()
+        self._state_lock = asyncio.Lock()
+
+        self._mqtt_host = mqtt_host
+        self._mqtt_base_topic_cover = mqtt_base_topic_cover
+        self._mqtt_base_topic_relay = mqtt_base_topic_relay
+
+        # Logger setup
+        self._logger = logging.getLogger(self.cover)
+
+        self._topics()
+
+    def _topics(self) -> None:
+        """Calculate and assign MQTT topics required for shade"""
+        self._logger.debug("initialize the topics")
+
+        self._cover_command_topic = TOPIC_FORMAT.format(
+            base_topic=self._mqtt_base_topic_cover,
+            entity=Entity.COVER.value,
+            name=self.cover,
+            action=Action.COMMAND.value,
         )
-        client.publish(topic, PAYLOAD.OFF)
-    elif input_op == OP.CLOSE and cover_state == COVER_STATE.CLOSING:
-        client.publish(topic, message.payload)
+        self._logger.debug(f"cover command topic {self._cover_command_topic}")
+        self._cover_state_topic = TOPIC_FORMAT.format(
+            base_topic=self._mqtt_base_topic_cover,
+            entity=Entity.COVER.value,
+            name=self.cover,
+            action=Action.STATE.value,
+        )
+        self._logger.debug(f"cover state topic {self._cover_state_topic}")
+        self._cover_position_topic = TOPIC_FORMAT.format(
+            base_topic=self._mqtt_base_topic_cover,
+            entity=Entity.COVER.value,
+            name=self.cover,
+            action=Action.POSITION.value,
+        )
+        self._logger.debug(f"cover position topic {self._cover_position_topic}")
+        self._open_relay_state_topic = TOPIC_FORMAT.format(
+            base_topic=self._mqtt_base_topic_relay,
+            entity=Entity.RELAY.value,
+            name=self.open_relay,
+            action=Action.STATE.value,
+        )
+        self._logger.debug(f"open relay state topic {self._open_relay_state_topic}")
+        self._close_relay_state_topic = TOPIC_FORMAT.format(
+            base_topic=self._mqtt_base_topic_relay,
+            entity=Entity.RELAY.value,
+            name=self.close_relay,
+            action=Action.STATE.value,
+        )
+        self._logger.debug(f"close relay state topic {self._close_relay_state_topic}")
+        # Wildcard here
+        self._relay_state_filter = TOPIC_FORMAT.format(
+            base_topic=self._mqtt_base_topic_relay,
+            entity=Entity.RELAY.value,
+            name="+",
+            action=Action.STATE.value,
+        )
+        self._logger.debug(f"relay state topic {self._relay_state_filter}")
+        self._open_relay_command_topic = TOPIC_FORMAT.format(
+            base_topic=self._mqtt_base_topic_relay,
+            entity=Entity.RELAY.value,
+            name=self.open_relay,
+            action=Action.COMMAND.value,
+        )
+        self._logger.debug(f"open relay command topic {self._open_relay_state_topic}")
+        self._close_relay_command_topic = TOPIC_FORMAT.format(
+            base_topic=self._mqtt_base_topic_relay,
+            entity=Entity.RELAY.value,
+            name=self.close_relay,
+            action=Action.COMMAND.value,
+        )
+        self._logger.debug(f"close relay command topic {self._close_relay_state_topic}")
 
+    # Position tracking
+    async def run(self) -> None:
+        """Main async coroutine"""
+        self._logger.info("start tracking ...")
+        async with contextlib.AsyncExitStack() as stack:
+            # Connects to the MQTT host using the context manager
+            self._mqtt_client = asyncio_mqtt.Client(self._mqtt_host)
+            await stack.enter_async_context(self._mqtt_client)
 
-def on_message_relay(
-    client: mqtt.Client,
-    userdata: typing.Union[None, typing.Dict],
-    message: mqtt.MQTTMessage,
-) -> None:
-    """Callback for relay MQTT events"""
-    logger.info(f"Handle relay message {message.payload} for topic {message.topic}")
+            await asyncio.gather(
+                self._subscribe_cover(),
+                self._subscribe_relays(),
+                self._track_position(),
+            )
 
-    # Match input
-    match = TOPIC_REGEX.match(message.topic)
+    async def _subscribe_relays(self) -> None:
+        """Subscribe to and handle relay state topic updates"""
+        self._logger.debug("subscribe to and handle relay state topics")
+        await asyncio.gather(
+            self._mqtt_client.subscribe(self._open_relay_state_topic),
+            self._mqtt_client.subscribe(self._close_relay_state_topic),
+        )
+        async with self._mqtt_client.filtered_messages(
+            self._relay_state_filter
+        ) as messages:
+            async for message in messages:
+                if message.topic not in (
+                    self._open_relay_state_topic,
+                    self._close_relay_state_topic,
+                ):
+                    continue
+                self._logger.info(f"relays message {message.topic} -- {message.payload.decode()}")
+                # Update relay state
+                if message.topic == self._open_relay_state_topic:
+                    async with self._open_relay_lock:
+                        if message.payload == Payload.ON.value:
+                            self._open_relay_state = True
+                        elif message.payload == Payload.OFF.value:
+                            self._open_relay_state = False
+                elif message.topic == self._close_relay_state_topic:
+                    async with self._close_relay_lock:
+                        if message.payload == Payload.ON.value:
+                            self._close_relay_state = True
+                        elif message.payload == Payload.OFF.value:
+                            self._close_relay_state = False
 
-    # Nothing found, just break off
-    if match is None:
-        return
+    async def _subscribe_cover(self) -> None:
+        """Subscribe to and handle cover command topic"""
+        self._logger.debug("subscribe to and handle cover command topic")
+        await self._mqtt_client.subscribe(self._cover_command_topic)
+        async with self._mqtt_client.filtered_messages(
+            self._cover_command_topic
+        ) as messages:
+            async for message in messages:
+                if message.topic != self._cover_command_topic:
+                    continue
+                self._logger.info(f"cover message {message.topic} -- {message.payload.decode()}")
+                if message.payload == Payload.OPEN.value:
+                    await self.set_open()
+                elif message.payload == Payload.STOP.value:
+                    await self.set_stop()
+                elif message.payload == Payload.CLOSE.value:
+                    await self.set_close()
 
-    name = match.group("name")
-    cover_name = userdata["relay_map"][name]["name"]
-    relay_op = userdata["relay_map"][name]["op"]
+    async def _track_position(self) -> None:
+        self._logger.debug("start tracking position")
+        while True:
+            new_position = int(self.position + self._direction * self._increment)
+            if not 0 <= new_position <= self._max_position:
+                self._direction = Shade._DIRECTION_STOPPED
+                new_position = max([min([self._max_position, new_position]), 0])
 
-    # Update global state
-    if relay_op == OP.OPEN and message.payload == PAYLOAD.ON:
-        userdata["cover_state"][cover_name] = COVER_STATE.OPENING
-    elif relay_op == OP.OPEN and message.payload == PAYLOAD.OFF:
-        userdata["cover_state"][cover_name] = COVER_STATE.STILL
-    elif relay_op == OP.CLOSE and message.payload == PAYLOAD.OFF:
-        userdata["cover_state"][cover_name] = COVER_STATE.STILL
-    elif relay_op == OP.CLOSE and message.payload == PAYLOAD.ON:
-        userdata["cover_state"][cover_name] = COVER_STATE.CLOSING
-
-    return
-
-
-def on_connect(
-    client: mqtt.Client,
-    userdata: typing.Union[None, typing.Dict],
-    flags: typing.Dict,
-    rc: int,
-) -> None:
-    """Callback for when MQTT connection to broker is set up"""
-    logger.info("Subscribe to all state topics ...")
-    for relay_name, relay_map in userdata["config"].items():
-        for op, entity_map in relay_map.items():
-            for entity_type, entity_name in entity_map.items():
-                if entity_type == ENTITY.INPUT:
-                    topic = TOPIC_FORMAT.format(
-                        base_topic=userdata["inputs_base_topic"],
-                        entity_type=entity_type,
-                        name=entity_name,
-                        action=ACTION.STATE,
-                    )
-                    client.message_callback_add(topic, on_message_input)
-                elif entity_type == ENTITY.RELAY:
-                    topic = TOPIC_FORMAT.format(
-                        base_topic=userdata["relays_base_topic"],
-                        entity_type=entity_type,
-                        name=entity_name,
-                        action=ACTION.STATE,
-                    )
-                    client.message_callback_add(topic, on_message_relay)
-                else:
-                    logger.warning(f"Unknown entity type {entity_type}")
-                    return
-                logger.info(
-                    f"Subscribe to topic {topic} for {relay_name}-{op}-{entity_type}"
+            self.position = new_position
+            self._logger.debug(f"position: {self.position}")
+            if (
+                0 < self.position < self._max_position
+                and self._direction != Shade._DIRECTION_STOPPED
+            ):
+                await self._mqtt_client.publish(
+                    self._cover_position_topic,
+                    str(self.position).encode(),
                 )
-                client.subscribe(topic)
+
+            # Push out event for the edges
+            if self.position == 0 and self._state != Shade.STOPPED:
+                # Stop everything
+                await asyncio.gather(
+                    self.set_stop(),
+                    self._mqtt_client.publish(
+                        self._cover_position_topic,
+                        str(self.position).encode(),
+                    ),
+                    self._mqtt_client.publish(
+                        self._cover_state_topic,
+                        Shade.CLOSED,
+                    ),
+                )
+            elif self.position == self._max_position and self._state != Shade.STOPPED:
+                await asyncio.gather(
+                    self.set_stop(),
+                    self._mqtt_client.publish(
+                        self._cover_position_topic,
+                        str(self.position).encode(),
+                    ),
+                    self._mqtt_client.publish(
+                        self._cover_state_topic,
+                        Shade.OPEN,
+                    ),
+                )
+
+            await asyncio.sleep(self._sleep_time)
+
+    async def _position_open(self) -> None:
+        """Start counter for open direction"""
+        async with self._direction_lock:
+            self._direction = Shade._DIRECTION_OPENING
+
+    async def _position_close(self) -> None:
+        """Start counter for close direction"""
+        async with self._direction_lock:
+            self._direction = Shade._DIRECTION_CLOSING
+
+    async def _position_stop(self) -> None:
+        """Stop counter"""
+        async with self._direction_lock:
+            self._direction = Shade._DIRECTION_STOPPED
+
+    # Commands: incoming commands for state transitions
+    async def set_open(self) -> None:
+        """Open shade from command"""
+        if self._state == Shade.STOPPED:
+            self._logger.debug("open on stopped state")
+            await asyncio.gather(
+                self._set_close_relay_off(),
+                self._set_open_relay_on(),
+                self._state_opening(),
+            )
+        elif self._state == Shade.CLOSING:
+            self._logger.debug("open on closing state")
+            # First stop everything
+            await asyncio.gather(
+                self._set_close_relay_off(),
+                self._set_open_relay_off(),
+                self._state_stopped(),
+            )
+            # Then, open again
+            await asyncio.gather(
+                self._set_close_relay_off(),
+                self._set_open_relay_on(),
+                self._state_opening(),
+            )
+
+    async def set_stop(self) -> None:
+        """Stop shade from command"""
+        await asyncio.gather(
+            self._set_close_relay_off(),
+            self._set_open_relay_off(),
+            self._state_stopped(),
+        )
+
+    async def set_close(self) -> None:
+        """Close shade from command"""
+        if self._state == Shade.STOPPED:
+            self._logger.debug("close on stopped state")
+            await asyncio.gather(
+                self._set_close_relay_on(),
+                self._set_open_relay_off(),
+                self._state_closing(),
+            )
+        elif self._state == Shade.OPENING:
+            self._logger.debug("close on opening state")
+            # First stop everything
+            await asyncio.gather(
+                self._set_close_relay_off(),
+                self._set_open_relay_off(),
+                self._state_stopped(),
+            )
+            # Then, close again
+            await asyncio.gather(
+                self._set_close_relay_on(),
+                self._set_open_relay_off(),
+                self._state_closing(),
+            )
+
+    # Relays
+
+    # Incoming state: wait for relay states to have been updated
+    async def _state_opening(self) -> None:
+        while not (self._open_relay_state and not self._close_relay_state):
+            self._logger.debug(
+                f"open relay state {self._open_relay_state} -- close relay state {self._close_relay_state}"
+            )
+            await asyncio.sleep(self._sleep_time)
+
+        async with self._state_lock:
+            old_state = self._state
+            self._state = Shade.OPENING
+            self._logger.debug(f"state update from {old_state} to {self._state}")
+            await asyncio.gather(
+                self._position_open(),
+                self._mqtt_client.publish(
+                    self._cover_state_topic,
+                    Shade.OPENING,
+                ),
+            )
+
+    async def _state_stopped(self) -> None:
+        while not (not self._open_relay_state and not self._close_relay_state):
+            self._logger.debug(
+                f"open relay state {self._open_relay_state} -- close relay state {self._close_relay_state}"
+            )
+            await asyncio.sleep(self._sleep_time)
+
+        async with self._state_lock:
+            old_state = self._state
+            self._state = Shade.STOPPED
+            self._logger.debug(f"state update from {old_state} to {self._state}")
+            await self._position_stop()
+
+    async def _state_closing(self) -> None:
+        while not (not self._open_relay_state and self._close_relay_state):
+            self._logger.debug(
+                f"open relay state {self._open_relay_state} -- close relay state {self._close_relay_state}"
+            )
+            await asyncio.sleep(self._sleep_time)
+
+        async with self._state_lock:
+            old_state = self._state
+            self._state = Shade.CLOSING
+            self._logger.debug(f"state update from {old_state} to {self._state}")
+            await asyncio.gather(
+                self._position_close(),
+                self._mqtt_client.publish(
+                    self._cover_state_topic,
+                    Shade.CLOSING,
+                ),
+            )
+
+    # Incoming state: update the relay state from MQTT
+    async def _set_open_relay_on(self) -> None:
+        """Push state update for open relay on"""
+        self._logger.info("set open relay on")
+        await self._mqtt_client.publish(
+            self._open_relay_command_topic,
+            Payload.ON.value,
+        )
+
+    async def _set_open_relay_off(self) -> None:
+        """Push state update for open relay off"""
+        self._logger.info("set open relay off")
+        await self._mqtt_client.publish(
+            self._open_relay_command_topic,
+            Payload.OFF.value,
+        )
+
+    async def _set_close_relay_on(self) -> None:
+        """Push state update for close relay on"""
+        self._logger.info("set close relay on")
+        await self._mqtt_client.publish(
+            self._close_relay_command_topic,
+            Payload.ON.value,
+        )
+
+    async def _set_close_relay_off(self) -> None:
+        """Push state update for close relay off"""
+        self._logger.info("set close relay off")
+        await self._mqtt_client.publish(
+            self._close_relay_command_topic,
+            Payload.OFF.value,
+        )
 
 
-def is_config_valid(
-    config: typing.Dict[str, typing.Dict[str, typing.Dict[str, str]]]
-) -> bool:
-    """Check whether config is expected format"""
-    for relay_name, relay_map in config.items():
-        for op, entity_map in relay_map.items():
-            if op not in (OP.OPEN, OP.CLOSE):
-                logger.warning(f"Found invalid op {op} in config")
+def _shades_from_config(
+    config: typing.Dict[str, typing.Dict[str, str]],
+    host: str,
+    cover_base: str,
+    relay_base: str,
+) -> typing.Iterable[Shade]:
+    """Build list of shades from yaml config file"""
+    return [
+        Shade(name, relays["open"], relays["close"], host, cover_base, relay_base)
+        for name, relays in config.items()
+    ]
+
+
+def _is_config_valid(config: typing.Dict[str, typing.Dict[str, str]]) -> bool:
+    """Validate YAML file config"""
+    relays = []
+    for name, relay_map in config.items():
+        for op in relay_map.keys():
+            if op not in ("open", "close"):
+                logger.warning(f"op {op} is not one of open, close")
                 return False
-            for entity_type, entity_name in entity_map.items():
-                if entity_type not in (ENTITY.INPUT, ENTITY.RELAY):
-                    logger.warning(f"Found invalid entity type {entity_type} in config")
-                    return False
-        if relay_map[OP.OPEN][ENTITY.INPUT] == relay_map[OP.CLOSE][ENTITY.INPUT]:
-            logger.warning(f"Found duplicate input entity in config for {relay_name}")
+        if relay_map["open"] == relay_map["close"]:
+            logger.warning(f"found duplicate relay for cover {name}")
             return False
-        if relay_map[OP.OPEN][ENTITY.RELAY] == relay_map[OP.CLOSE][ENTITY.RELAY]:
-            logger.warning(f"Found duplicate relay entity in config for {relay_name}")
-            return False
+        for relay in relay_map.values():
+            if relay in relays:
+                logger.warning(f"Non-unique relay name {relay}")
+                return False
+            else:
+                relays.append(relay)
     return True
 
 
-def input_map(
-    config: typing.Dict[str, typing.Dict[str, typing.Dict[str, str]]]
-) -> typing.Dict[str, typing.Dict[str, str]]:
-    """Builds an easy mapping for inputs to the cover details"""
-    mapping = {}
-    for relay_name, relay_map in config.items():
-        mapping[relay_map[OP.OPEN][ENTITY.INPUT]] = {
-            "name": relay_name,
-            "op": OP.OPEN,
-            "relay": relay_map[OP.OPEN][ENTITY.RELAY],
-        }
-        mapping[relay_map[OP.CLOSE][ENTITY.INPUT]] = {
-            "name": relay_name,
-            "op": OP.CLOSE,
-            "relay": relay_map[OP.CLOSE][ENTITY.RELAY],
-        }
-    return mapping
-
-
-def relay_map(
-    config: typing.Dict[str, typing.Dict[str, typing.Dict[str, str]]]
-) -> typing.Dict[str, typing.Dict[str, str]]:
-    """Builds an easy mapping for outputs to the cover details"""
-    mapping = {}
-    for relay_name, relay_map in config.items():
-        mapping[relay_map[OP.OPEN][ENTITY.RELAY]] = {
-            "name": relay_name,
-            "op": OP.OPEN,
-        }
-        mapping[relay_map[OP.CLOSE][ENTITY.RELAY]] = {
-            "name": relay_name,
-            "op": OP.CLOSE,
-        }
-    return mapping
-
-
-def init_cover_state(
-    config: typing.Dict[str, typing.Dict[str, typing.Dict[str, str]]]
-) -> typing.Dict[str, str]:
-    """Keeps the global state of the covers"""
-    return {cover_name: COVER_STATE.STILL for cover_name in config.keys()}
+async def main(shades: typing.Iterable[Shade]) -> None:
+    await asyncio.gather(*(shade.run() for shade in shades))
 
 
 if __name__ == "__main__":
-    # Parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("mqtt_host", help="MQTT broker host")
-    parser.add_argument("config", help="YAML config file")
-    parser.add_argument("inputs_base_topic", help="Base topic of device connecting to")
-    parser.add_argument("relays_base_topic", default="shady", help="Relay base topic")
-    parser.add_argument("--mqtt_port", type=int, default=1883)
-    parser.add_argument(
-        "--mqtt_client_id", help="Client ID to use for MQTT", default="covers"
-    )
-    parser.add_argument(
-        "--on_time",
-        type=int,
-        default=30,
-        help="Time in seconds the cover relays can on",
-    )
+    parser.add_argument("config", help="Config file mapping covers to relays")
+    parser.add_argument("--mqtt_host", help="MQTT broker host", default="shuttle.lan")
+    parser.add_argument("--mqtt_base_topic_cover", default="homeassistant")
+    parser.add_argument("--mqtt_base_topic_relay", default="shady")
     args = parser.parse_args()
 
-    # read config
+    logger.info("building shades from config")
+
     with open(args.config, "r") as fh:
         config = yaml.safe_load(fh)
 
-    # Validate
-    if not is_config_valid(config):
-        logger.warning("Found error in config, not starting ...")
+    if not _is_config_valid(config):
+        logger.warning("invalid config, stopping")
         sys.exit(1)
 
-    # MQTT initial setup
-    logger.info(f"Connecting to MQTT broker {args.mqtt_host}")
-    client = mqtt.Client(
-        client_id=args.mqtt_client_id,
-        clean_session=None,
-        userdata={
-            "relays_base_topic": args.relays_base_topic,
-            "inputs_base_topic": args.inputs_base_topic,
-            "config": config,
-            "input_map": input_map(config),
-            "relay_map": relay_map(config),
-            "cover_state": init_cover_state(config),
-            "on_time": args.on_time,
-        },
+    shades = _shades_from_config(
+        config,
+        args.mqtt_host,
+        args.mqtt_base_topic_cover,
+        args.mqtt_base_topic_relay,
     )
-    client.on_connect = on_connect
-    client.connect(args.mqtt_host, args.mqtt_port, 60)
-    client.enable_logger(logger=logger)
-
-    # Loop
-    logger.info("Starting MQTT loop")
-    client.loop_forever()
+    logger.info("start monitoring shades")
+    asyncio.run(main(shades))

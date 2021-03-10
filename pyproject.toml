@@ -9,6 +9,7 @@ license = "MIT"
 python = "^3.9"
 paho-mqtt = "^1.5.1"
 PyYAML = "^5.4.1"
+asyncio-mqtt = "^0.8.1"
 
 [tool.poetry.dev-dependencies]
 
