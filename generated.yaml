@@ -1,0 +1,531 @@
+switch:
+- platform: mqtt
+  name: inkom kelder open
+  command_topic: shady/input/3_01/command
+  state_topic: shady/input/3_01/state
+- platform: mqtt
+  name: inkom kelder close
+  command_topic: shady/input/3_02/command
+  state_topic: shady/input/3_02/state
+- platform: mqtt
+  name: praktijk midden open
+  command_topic: shady/input/3_05/command
+  state_topic: shady/input/3_05/state
+- platform: mqtt
+  name: praktijk midden close
+  command_topic: shady/input/3_06/command
+  state_topic: shady/input/3_06/state
+- platform: mqtt
+  name: praktijk achter open
+  command_topic: shady/input/3_07/command
+  state_topic: shady/input/3_07/state
+- platform: mqtt
+  name: praktijk achter close
+  command_topic: shady/input/3_08/command
+  state_topic: shady/input/3_08/state
+- platform: mqtt
+  name: bureau voorgevel open
+  command_topic: shady/input/3_09/command
+  state_topic: shady/input/3_09/state
+- platform: mqtt
+  name: bureau voorgevel close
+  command_topic: shady/input/3_10/command
+  state_topic: shady/input/3_10/state
+- platform: mqtt
+  name: bureau zijgevel open
+  command_topic: shady/input/3_11/command
+  state_topic: shady/input/3_11/state
+- platform: mqtt
+  name: bureau zijgevel close
+  command_topic: shady/input/3_12/command
+  state_topic: shady/input/3_12/state
+- platform: mqtt
+  name: keuken achter links open
+  command_topic: shady/input/2_09/command
+  state_topic: shady/input/2_09/state
+- platform: mqtt
+  name: keuken achter links close
+  command_topic: shady/input/2_10/command
+  state_topic: shady/input/2_10/state
+- platform: mqtt
+  name: keuken achter rechts open
+  command_topic: shady/input/2_11/command
+  state_topic: shady/input/2_11/state
+- platform: mqtt
+  name: keuken achter rechts close
+  command_topic: shady/input/2_12/command
+  state_topic: shady/input/2_12/state
+- platform: mqtt
+  name: keuken zijkant open
+  command_topic: shady/input/2_13/command
+  state_topic: shady/input/2_13/state
+- platform: mqtt
+  name: keuken zijkant close
+  command_topic: shady/input/2_14/command
+  state_topic: shady/input/2_14/state
+- platform: mqtt
+  name: living voorkant open
+  command_topic: shady/input/2_03/command
+  state_topic: shady/input/2_03/state
+- platform: mqtt
+  name: living voorkant close
+  command_topic: shady/input/2_04/command
+  state_topic: shady/input/2_04/state
+- platform: mqtt
+  name: living zijkant open
+  command_topic: shady/input/2_01/command
+  state_topic: shady/input/2_01/state
+- platform: mqtt
+  name: living zijkant close
+  command_topic: shady/input/2_02/command
+  state_topic: shady/input/2_02/state
+- platform: mqtt
+  name: eetkamer links open
+  command_topic: shady/input/2_05/command
+  state_topic: shady/input/2_05/state
+- platform: mqtt
+  name: eetkamer links close
+  command_topic: shady/input/2_06/command
+  state_topic: shady/input/2_06/state
+- platform: mqtt
+  name: eetkamer rechts open
+  command_topic: shady/input/2_07/command
+  state_topic: shady/input/2_07/state
+- platform: mqtt
+  name: eetkamer rechts close
+  command_topic: shady/input/2_08/command
+  state_topic: shady/input/2_08/state
+
+automation:
+- alias: toggle cover inkom kelder open start
+  trigger:
+    platform: state
+    entity_id: switch.inkom_kelder_open
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.open_cover
+    entity_id: cover.inkom_kelder
+- alias: toggle cover inkom kelder open stop
+  trigger:
+    platform: state
+    entity_id: switch.inkom_kelder_open
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.inkom_kelder
+- alias: toggle cover inkom kelder open start
+  trigger:
+    platform: state
+    entity_id: switch.inkom_kelder_close
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.close_cover
+    entity_id: cover.inkom_kelder
+- alias: toggle cover inkom kelder close stop
+  trigger:
+    platform: state
+    entity_id: switch.inkom_kelder_close
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.inkom_kelder
+- alias: toggle cover praktijk midden open start
+  trigger:
+    platform: state
+    entity_id: switch.praktijk_midden_open
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.open_cover
+    entity_id: cover.praktijk_midden
+- alias: toggle cover praktijk midden open stop
+  trigger:
+    platform: state
+    entity_id: switch.praktijk_midden_open
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.praktijk_midden
+- alias: toggle cover praktijk midden open start
+  trigger:
+    platform: state
+    entity_id: switch.praktijk_midden_close
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.close_cover
+    entity_id: cover.praktijk_midden
+- alias: toggle cover praktijk midden close stop
+  trigger:
+    platform: state
+    entity_id: switch.praktijk_midden_close
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.praktijk_midden
+- alias: toggle cover praktijk achter open start
+  trigger:
+    platform: state
+    entity_id: switch.praktijk_achter_open
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.open_cover
+    entity_id: cover.praktijk_achter
+- alias: toggle cover praktijk achter open stop
+  trigger:
+    platform: state
+    entity_id: switch.praktijk_achter_open
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.praktijk_achter
+- alias: toggle cover praktijk achter open start
+  trigger:
+    platform: state
+    entity_id: switch.praktijk_achter_close
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.close_cover
+    entity_id: cover.praktijk_achter
+- alias: toggle cover praktijk achter close stop
+  trigger:
+    platform: state
+    entity_id: switch.praktijk_achter_close
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.praktijk_achter
+- alias: toggle cover bureau voorgevel open start
+  trigger:
+    platform: state
+    entity_id: switch.bureau_voorgevel_open
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.open_cover
+    entity_id: cover.bureau_voorgevel
+- alias: toggle cover bureau voorgevel open stop
+  trigger:
+    platform: state
+    entity_id: switch.bureau_voorgevel_open
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.bureau_voorgevel
+- alias: toggle cover bureau voorgevel open start
+  trigger:
+    platform: state
+    entity_id: switch.bureau_voorgevel_close
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.close_cover
+    entity_id: cover.bureau_voorgevel
+- alias: toggle cover bureau voorgevel close stop
+  trigger:
+    platform: state
+    entity_id: switch.bureau_voorgevel_close
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.bureau_voorgevel
+- alias: toggle cover bureau zijgevel open start
+  trigger:
+    platform: state
+    entity_id: switch.bureau_zijgevel_open
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.open_cover
+    entity_id: cover.bureau_zijgevel
+- alias: toggle cover bureau zijgevel open stop
+  trigger:
+    platform: state
+    entity_id: switch.bureau_zijgevel_open
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.bureau_zijgevel
+- alias: toggle cover bureau zijgevel open start
+  trigger:
+    platform: state
+    entity_id: switch.bureau_zijgevel_close
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.close_cover
+    entity_id: cover.bureau_zijgevel
+- alias: toggle cover bureau zijgevel close stop
+  trigger:
+    platform: state
+    entity_id: switch.bureau_zijgevel_close
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.bureau_zijgevel
+- alias: toggle cover keuken achter links open start
+  trigger:
+    platform: state
+    entity_id: switch.keuken_achter_links_open
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.open_cover
+    entity_id: cover.keuken_achter_links
+- alias: toggle cover keuken achter links open stop
+  trigger:
+    platform: state
+    entity_id: switch.keuken_achter_links_open
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.keuken_achter_links
+- alias: toggle cover keuken achter links open start
+  trigger:
+    platform: state
+    entity_id: switch.keuken_achter_links_close
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.close_cover
+    entity_id: cover.keuken_achter_links
+- alias: toggle cover keuken achter links close stop
+  trigger:
+    platform: state
+    entity_id: switch.keuken_achter_links_close
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.keuken_achter_links
+- alias: toggle cover keuken achter rechts open start
+  trigger:
+    platform: state
+    entity_id: switch.keuken_achter_rechts_open
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.open_cover
+    entity_id: cover.keuken_achter_rechts
+- alias: toggle cover keuken achter rechts open stop
+  trigger:
+    platform: state
+    entity_id: switch.keuken_achter_rechts_open
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.keuken_achter_rechts
+- alias: toggle cover keuken achter rechts open start
+  trigger:
+    platform: state
+    entity_id: switch.keuken_achter_rechts_close
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.close_cover
+    entity_id: cover.keuken_achter_rechts
+- alias: toggle cover keuken achter rechts close stop
+  trigger:
+    platform: state
+    entity_id: switch.keuken_achter_rechts_close
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.keuken_achter_rechts
+- alias: toggle cover keuken zijkant open start
+  trigger:
+    platform: state
+    entity_id: switch.keuken_zijkant_open
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.open_cover
+    entity_id: cover.keuken_zijkant
+- alias: toggle cover keuken zijkant open stop
+  trigger:
+    platform: state
+    entity_id: switch.keuken_zijkant_open
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.keuken_zijkant
+- alias: toggle cover keuken zijkant open start
+  trigger:
+    platform: state
+    entity_id: switch.keuken_zijkant_close
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.close_cover
+    entity_id: cover.keuken_zijkant
+- alias: toggle cover keuken zijkant close stop
+  trigger:
+    platform: state
+    entity_id: switch.keuken_zijkant_close
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.keuken_zijkant
+- alias: toggle cover living voorkant open start
+  trigger:
+    platform: state
+    entity_id: switch.living_voorkant_open
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.open_cover
+    entity_id: cover.living_voorkant
+- alias: toggle cover living voorkant open stop
+  trigger:
+    platform: state
+    entity_id: switch.living_voorkant_open
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.living_voorkant
+- alias: toggle cover living voorkant open start
+  trigger:
+    platform: state
+    entity_id: switch.living_voorkant_close
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.close_cover
+    entity_id: cover.living_voorkant
+- alias: toggle cover living voorkant close stop
+  trigger:
+    platform: state
+    entity_id: switch.living_voorkant_close
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.living_voorkant
+- alias: toggle cover living zijkant open start
+  trigger:
+    platform: state
+    entity_id: switch.living_zijkant_open
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.open_cover
+    entity_id: cover.living_zijkant
+- alias: toggle cover living zijkant open stop
+  trigger:
+    platform: state
+    entity_id: switch.living_zijkant_open
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.living_zijkant
+- alias: toggle cover living zijkant open start
+  trigger:
+    platform: state
+    entity_id: switch.living_zijkant_close
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.close_cover
+    entity_id: cover.living_zijkant
+- alias: toggle cover living zijkant close stop
+  trigger:
+    platform: state
+    entity_id: switch.living_zijkant_close
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.living_zijkant
+- alias: toggle cover eetkamer links open start
+  trigger:
+    platform: state
+    entity_id: switch.eetkamer_links_open
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.open_cover
+    entity_id: cover.eetkamer_links
+- alias: toggle cover eetkamer links open stop
+  trigger:
+    platform: state
+    entity_id: switch.eetkamer_links_open
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.eetkamer_links
+- alias: toggle cover eetkamer links open start
+  trigger:
+    platform: state
+    entity_id: switch.eetkamer_links_close
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.close_cover
+    entity_id: cover.eetkamer_links
+- alias: toggle cover eetkamer links close stop
+  trigger:
+    platform: state
+    entity_id: switch.eetkamer_links_close
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.eetkamer_links
+- alias: toggle cover eetkamer rechts open start
+  trigger:
+    platform: state
+    entity_id: switch.eetkamer_rechts_open
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.open_cover
+    entity_id: cover.eetkamer_rechts
+- alias: toggle cover eetkamer rechts open stop
+  trigger:
+    platform: state
+    entity_id: switch.eetkamer_rechts_open
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.eetkamer_rechts
+- alias: toggle cover eetkamer rechts open start
+  trigger:
+    platform: state
+    entity_id: switch.eetkamer_rechts_close
+    from: 'off'
+    to: 'on'
+  action:
+    service: cover.close_cover
+    entity_id: cover.eetkamer_rechts
+- alias: toggle cover eetkamer rechts close stop
+  trigger:
+    platform: state
+    entity_id: switch.eetkamer_rechts_close
+    from: 'on'
+    to: 'off'
+  action:
+    service: cover.stop_cover
+    entity_id: cover.eetkamer_rechts

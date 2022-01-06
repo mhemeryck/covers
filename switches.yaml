@@ -1,0 +1,84 @@
+inkom_kelder:
+  open:
+    input: "3_01"
+    relay: "3_02"
+  close:
+    input: "3_02"
+    relay: "3_03"
+praktijk_midden:
+  open:
+    input: "3_05"
+    relay: "3_04"
+  close:
+    input: "3_06"
+    relay: "3_05"
+praktijk_achter:
+  open:
+    input: "3_07"
+    relay: "3_06"
+  close:
+    input: "3_08"
+    relay: "3_07"
+bureau_voorgevel:
+  open:
+    input: "3_09"
+    relay: "3_09"
+  close:
+    input: "3_10"
+    relay: "3_10"
+bureau_zijgevel:
+  open:
+    input: "3_11"
+    relay: "3_11"
+  close:
+    input: "3_12"
+    relay: "3_12"
+keuken_achter_links:
+  open:
+    input: "2_09"
+    relay: "2_02"
+  close:
+    input: "2_10"
+    relay: "2_03"
+keuken_achter_rechts:
+  open:
+    input: "2_11"
+    relay: "2_08"
+  close:
+    input: "2_12"
+    relay: "2_01"
+keuken_zijkant:
+  open:
+    input: "2_13"
+    relay: "2_05"
+  close:
+    input: "2_14"
+    relay: "2_04"
+living_voorkant:
+  open:
+    input: "2_03"
+    relay: "2_13"
+  close:
+    input: "2_04"
+    relay: "2_14"
+living_zijkant:
+  open:
+    input: "2_01"
+    relay: "3_13"
+  close:
+    input: "2_02"
+    relay: "3_14"
+eetkamer_links:
+  open:
+    input: "2_05"
+    relay: "2_07"
+  close:
+    input: "2_06"
+    relay: "2_06"
+eetkamer_rechts:
+  open:
+    input: "2_07"
+    relay: "2_10"
+  close:
+    input: "2_08"
+    relay: "2_09"
