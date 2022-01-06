@@ -12,6 +12,12 @@ With [poetry]; install a local virtualenv
 
 [poetry]: https://poetry.eustace.io/
 
+### Building
+
+Export the requirements from poetry
+
+    poetry export --without-hashes -o requirements.txt
+
 ### Commands
 
 Help:
