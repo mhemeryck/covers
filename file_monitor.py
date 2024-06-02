@@ -7,6 +7,41 @@ FILENAME: str = "relay_state"
 INTERVAL = 0.100
 
 
+class FileMonitor:
+    def __init__(self, filename: str) -> None:
+        self._filename = filename
+        self._state = False
+        self._previous = False
+        self._file_lock = asyncio.Lock()
+
+    async def read(self, interval: float = INTERVAL) -> typing.AsyncGenerator[bool, None]:
+        state = False
+        old = False
+        while True:
+            async with aiofiles.open(self._filename, "r") as fh:
+                # read
+                new = await fh.read()
+                match new:
+                    case "1\n":
+                        state = True
+                    case "0\n":
+                        state = False
+                    case _:
+                        print(state)
+                        pass
+                if state != old:
+                    print(f"Found something new {old} -> {state}")
+                    old = state
+                    yield state
+                await asyncio.sleep(interval)
+
+    async def write(self, state: bool) -> None:
+        async with self._file_lock:
+            async with aiofiles.open(self._filename, "w") as fh:
+                data = "1\n" if state else "0\n"
+                await fh.write(data)
+
+
 # class FileMonitor(collections.abc.AsyncGenerator):
 #     def __init__(self, filename: str, interval: float) -> None:
 #         self._filename = filename
@@ -44,7 +79,7 @@ INTERVAL = 0.100
 #         self._exception = typ(val)
 
 
-async def file_monitor(filename: str, interval: float = INTERVAL) -> typing.AsyncGenerator[bool, bool]:
+async def file_monitor(filename: str, interval: float = INTERVAL) -> typing.AsyncGenerator[bool, None]:
     state = False
     old = False
     while True:
@@ -64,31 +99,23 @@ async def file_monitor(filename: str, interval: float = INTERVAL) -> typing.Asyn
                 old = state
                 yield state
             await asyncio.sleep(interval)
-            # write, if needed
-            update = yield update
-            print(f"got value update: {update}")
-            if update != state:
-                await fh.seek(0)
-                await fh.write("1\n" if update else "0\n")
-                await fh.flush()
-                state = update
 
 
 async def main() -> None:
-    fm = file_monitor(FILENAME)
-    # async for event in file_monitor(FILENAME):
-    #     print(event)
-    # file_monitor = FileMonitor(FILENAME, INTERVAL)
+    fm = FileMonitor(FILENAME)
 
     async def reader():
-        async for event in fm:
+        async for event in fm.read():
             print(f"Read an event: {event}")
 
     async def writer():
-        await fm.asend(True)
-        # await fm.asend(False)
+        await asyncio.sleep(2)
+        await fm.write(True)
+        await asyncio.sleep(2)
+        await fm.write(False)
+        await asyncio.sleep(2)
 
-    asyncio.gather(reader(), writer())
+    await asyncio.gather(reader(), writer())
 
 
 if __name__ == "__main__":
