@@ -2,84 +2,62 @@ import asyncio
 import typing
 
 import aiofiles
+from aiofiles.threadpool.text import AsyncTextIOWrapper
 
 FILENAME: str = "relay_state"
 INTERVAL = 0.100
 
 
 class FileMonitor:
-    # def __init__(self, filename: str) -> None:
-    def __init__(self) -> None:
-        pass
-
-    @classmethod
-    async def create(cls, filename: str) -> typing.Self:
-        self = cls()
+    def __init__(self, filename: str) -> None:
         self._filename = filename
         self._state = False
         self._previous = False
         self._file_lock = asyncio.Lock()
-        self._file_handle = await aiofiles.open(self._filename, "r+")
-        return self
+        self._file_handle = None
+
+    async def _get_file_handle(self) -> AsyncTextIOWrapper:
+        if self._file_handle is None:
+            self._file_handle = await aiofiles.open(self._filename, "r+")
+        return self._file_handle
 
     async def read(self, interval: float = INTERVAL) -> typing.AsyncGenerator[bool, None]:
         state = False
         old = False
         while True:
             async with self._file_lock:
-                # read
-                await self._file_handle.seek(0)
-                new = await self._file_handle.read()
-                match new:
-                    case "1\n":
-                        state = True
-                    case "0\n":
-                        state = False
-                    case _:
-                        print(f"something went wrong, state: {new}")
-                        pass
-                if state != old:
-                    print(f"Found something new {old} -> {state}")
-                    old = state
-                    yield state
-                await asyncio.sleep(interval)
+                fh = await self._get_file_handle()
+                await fh.seek(0)
+                new = await fh.read()
 
-    async def write(self, state: bool) -> None:
+            match new:
+                case "1\n":
+                    state = True
+                case "0\n":
+                    state = False
+                case _:
+                    print(f"something went wrong, state: {new}")
+                    pass
+
+            if state != old:
+                print(f"Found something new {old} -> {state}")
+                old = state
+                yield state
+            await asyncio.sleep(interval)
+
+    async def write(self, state: bool) -> int:
+        print("trigger write")
+        data = "1\n" if state else "0\n"
         async with self._file_lock:
-            data = "1\n" if state else "0\n"
-            await self._file_handle.seek(0)
-            await self._file_handle.write(data)
-            await self._file_handle.flush()
-
-
-#     async def athrow(self, typ, val=None, tb=None):
-#         self._exception = typ(val)
-
-
-# async def file_monitor(filename: str, interval: float = INTERVAL) -> typing.AsyncGenerator[bool, None]:
-#     state = False
-#     old = False
-#     while True:
-#         async with aiofiles.open(filename, "r+") as fh:
-#             # read
-#             new = await fh.read()
-#             match new:
-#                 case "1\n":
-#                     state = True
-#                 case "0\n":
-#                     state = False
-#                 case _:
-#                     print(state)
-#                     pass
-#             if state != old:
-#                 print(f"Found something new {old} -> {state}")
-#                 old = state
-#                 yield state
-#             await asyncio.sleep(interval)
+            fh = await self._get_file_handle()
+            await fh.seek(0)
+            n = await fh.write(data)
+            await fh.flush()
+        return n
 
 
 async def main() -> None:
-    fm = await FileMonitor.create(FILENAME)
+    fm = FileMonitor(FILENAME)
 
     async def reader():
         async for event in fm.read():
