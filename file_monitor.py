@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import typing
 
 import aiofiles
@@ -6,6 +7,12 @@ from aiofiles.threadpool.text import AsyncTextIOWrapper
 
 FILENAME: str = "relay_state"
 INTERVAL = 0.100
+
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.DEBUG,
+)
+logger = logging.getLogger(__name__)
 
 
 class FileMonitor:
@@ -36,17 +43,17 @@ class FileMonitor:
                 case "0\n":
                     state = False
                 case _:
-                    print(f"something went wrong, state: {new}")
+                    logger.debug(f"something went wrong, state: {new}")
                     pass
 
             if state != old:
-                print(f"Found something new {old} -> {state}")
+                logger.debug(f"Found something new {old} -> {state}")
                 old = state
                 yield state
             await asyncio.sleep(interval)
 
     async def write(self, state: bool) -> int:
-        print("trigger write")
+        logger.debug("trigger write")
         data = "1\n" if state else "0\n"
         async with self._file_lock:
             fh = await self._get_file_handle()
@@ -61,7 +68,7 @@ async def main() -> None:
 
     async def reader():
         async for event in fm.read():
-            print(f"Read an event: {event}")
+            logger.debug(f"Read an event: {event}")
 
     async def writer():
         await asyncio.sleep(2)
