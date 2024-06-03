@@ -16,25 +16,61 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+_file_handle_q_type = asyncio.Queue[typing.Tuple[str, AsyncTextIOWrapper]]
+_event_q_type = asyncio.Queue[typing.Tuple[str, str]]
+
+
+async def worker(file_handle_q: _file_handle_q_type, event_q: _event_q_type) -> None:
+    fid, fh = await file_handle_q.get()
+    try:
+        await fh.seek(0)
+        data = await fh.read()
+    finally:
+        file_handle_q.task_done()
+    await event_q.put((fid, data))
+
+
 class FileMonitor:
-    def __init__(self, filename: str) -> None:
+    def __init__(
+        self,
+        filename: str,
+        file_handle_q: _file_handle_q_type,
+        event_q: _event_q_type,
+    ) -> None:
+        self._id = filename
         self._filename = filename
         self._state = False
         self._previous = False
         self._file_lock = asyncio.Lock()
         self._file_handle = None
+        self._file_handle_q = file_handle_q
+        self._event_q = event_q
 
     async def _get_file_handle(self) -> AsyncTextIOWrapper:
         if self._file_handle is None:
             self._file_handle = await aiofiles.open(self._filename, "r+")
         return self._file_handle
 
-    async def read(self, interval: float = INTERVAL) -> typing.AsyncGenerator[bool, None]:
+    async def poll(self, interval: float = INTERVAL) -> None:
+        """Poll produces polling jobs"""
         while True:
             async with self._file_lock:
                 fh = await self._get_file_handle()
-                await fh.seek(0)
-                new = await fh.read()
+                await self._file_handle_q.put((self._id, fh))
+            await asyncio.sleep(interval)
+
+    async def read(self, interval: float = INTERVAL) -> typing.AsyncGenerator[bool, None]:
+        """read consumes events coming back from the polling jobs"""
+        while True:
+            # async with self._file_lock:
+            #     fh = await self._get_file_handle()
+            #     await fh.seek(0)
+            #     new = await fh.read()
+            (fid, new) = await self._event_q.get()
+            # Ignore events which aren't ours
+            if fid != self._id:
+                continue
+            self._event_q.task_done()
 
             match new:
                 case "1\n":
