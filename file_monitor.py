@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import typing
 
 import aiofiles
@@ -62,20 +63,33 @@ class FileMonitor:
 
 
 async def main() -> None:
-    fm = FileMonitor(FILENAME)
+    paths = []
+    for root, _, files in os.walk("./fixtures"):
+        for f in files:
+            if "relay_state_" in f:
+                paths.append(os.path.join(root, f))
 
-    async def reader():
-        async for event in fm.read():
-            logger.debug(f"Read an event: {event}")
+    monitors = [FileMonitor(p) for p in paths]
+    # fm = FileMonitor(FILENAME)
 
-    async def writer():
-        await asyncio.sleep(2)
-        await fm.write(True)
-        await asyncio.sleep(2)
-        await fm.write(False)
-        await asyncio.sleep(2)
+    # async def reader():
+    #     async for event in fm.read():
+    #         logger.debug(f"Read an event: {event}")
 
-    await asyncio.gather(reader(), writer())
+    # async def writer():
+    #     await asyncio.sleep(2)
+    #     await fm.write(True)
+    #     await asyncio.sleep(2)
+    #     await fm.write(False)
+    #     await asyncio.sleep(2)
+
+    # await asyncio.gather(reader(), writer())
+
+    async def reader(monitor: FileMonitor) -> None:
+        async for event in monitor.read():
+            logger.debug(f"Read event for monitor {monitor._filename}: {event}")
+
+    await asyncio.gather(*[reader(monitor) for monitor in monitors])
 
 
 if __name__ == "__main__":
