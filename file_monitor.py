@@ -29,8 +29,6 @@ class FileMonitor:
         return self._file_handle
 
     async def read(self, interval: float = INTERVAL) -> typing.AsyncGenerator[bool, None]:
-        state = False
-        old = False
         while True:
             async with self._file_lock:
                 fh = await self._get_file_handle()
@@ -39,17 +37,17 @@ class FileMonitor:
 
             match new:
                 case "1\n":
-                    state = True
+                    self._state = True
                 case "0\n":
-                    state = False
+                    self._state = False
                 case _:
                     logger.debug(f"something went wrong, state: {new}")
                     pass
 
-            if state != old:
-                logger.debug(f"Found something new {old} -> {state}")
-                old = state
-                yield state
+            if self._state != self._previous:
+                logger.debug(f"Found something new {self._previous} -> {self._state}")
+                self._previous = self._state
+                yield self._state
             await asyncio.sleep(interval)
 
     async def write(self, state: bool) -> int:
