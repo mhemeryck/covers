@@ -21,9 +21,11 @@ class AsyncEventHandler(FileSystemEventHandler):
         self.loop = loop
 
     def on_modified(self, event):
+        # self.loop.run_until_complete(handle_event(event))
         self.loop.call_soon_threadsafe(asyncio.create_task, handle_event(event))
 
     def on_created(self, event):
+        # self.loop.run_until_complete(handle_event(event))
         self.loop.call_soon_threadsafe(asyncio.create_task, handle_event(event))
 
 
@@ -47,12 +49,10 @@ async def main():
     loop = asyncio.get_running_loop()
     event_handler = AsyncEventHandler(loop)
 
-    watchdog_thread = threading.Thread(target=start_watchdog, args=(path, event_handler))
-    watchdog_thread.daemon = True  # Allow thread to exit when main program exits
+    watchdog_thread = threading.Thread(target=start_watchdog, args=(path, event_handler), daemon=True)
     watchdog_thread.start()
 
-    task = loop.create_task(worker(queue))
-    await task
+    await worker(queue)
 
     # try:
     #     while True:
