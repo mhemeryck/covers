@@ -30,7 +30,7 @@ class Device:
 
     async def read(self) -> typing.AsyncGenerator[bool, None]:
         async for event in watchfiles.awatch(self._filename, force_polling=True):
-            yield event
+            yield event.difference()
 
     async def write(self, state: bool) -> None:
         async with aiofiles.open(self._filename, "wb") as fh:
@@ -52,14 +52,11 @@ async def reader(device) -> None:
 
 async def main() -> None:
     filenames = crawl(WATCH_DIRECTORY)
-    device = Device(filenames[0])
-    device1 = Device(filenames[1])
-    await asyncio.gather(
-        writer(device),
-        reader(device),
-        writer(device1),
-        reader(device1),
-    )
+    jobs = []
+    for filename in filenames:
+        device = Device(filename)
+        jobs += [writer(device), reader(device)]
+    await asyncio.gather(*jobs)
 
 
 if __name__ == "__main__":
