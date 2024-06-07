@@ -1,69 +1,51 @@
 import asyncio
 import os
-import threading
 
+# from hachiko.hachiko import AIOWatchdog
 from watchdog.observers.polling import PollingObserverVFS
-from watchdog.events import FileSystemEventHandler
 
-queue = asyncio.Queue()
-
-
-# Define an async function to handle file system events
-async def handle_event(event):
-    # print(f"Event type: {event.event_type} - Path: {event.src_path}")
-    # Simulate an async operation
-    await queue.put(str(event))
+WATCH_DIRECTORY = "./fixtures"
 
 
-# Create a custom event handler that triggers the async function
-class AsyncEventHandler(FileSystemEventHandler):
-    def __init__(self, loop):
-        self.loop = loop
+class EventHandler:
+    def __init__(self, queue: asyncio.Queue):
+        self._loop = asyncio.get_event_loop()
+        self._queue = queue
 
-    def on_modified(self, event):
-        # self.loop.run_until_complete(handle_event(event))
-        self.loop.call_soon_threadsafe(asyncio.create_task, handle_event(event))
+    async def handler(self, event):
+        await self._queue.put(event)
+        print(f"handle event async: {event}")
 
-    def on_created(self, event):
-        # self.loop.run_until_complete(handle_event(event))
-        self.loop.call_soon_threadsafe(asyncio.create_task, handle_event(event))
-
-
-def start_watchdog(path, event_handler):
-    observer = PollingObserverVFS(stat=os.stat, listdir=os.scandir, polling_interval=0.10)
-    observer.schedule(event_handler, path, recursive=True)
-    observer.start()
-    observer.join()
+    def dispatch(self, event):
+        # print(event)
+        self._loop.call_soon_threadsafe(asyncio.create_task, self.handler(event))
 
 
-async def worker(queue) -> None:
+async def worker(queue: asyncio.Queue) -> None:
     while True:
         event = await queue.get()
-        print(f"worker {event}")
+        print(f"received event from queue: {event}")
         queue.task_done()
 
 
-async def main():
-    path = "./fixtures"  # Replace with the path you want to monitor
+async def watch_fs(watch_dir):
+    queue = asyncio.Queue()
+    observer = PollingObserverVFS(stat=os.stat, listdir=os.scandir, polling_interval=0.1)
+    event_handler = EventHandler(queue)
+    observer.schedule(event_handler, watch_dir, True)
+    observer.start()
 
-    loop = asyncio.get_running_loop()
-    event_handler = AsyncEventHandler(loop)
-
-    watchdog_thread = threading.Thread(target=start_watchdog, args=(path, event_handler), daemon=True)
-    watchdog_thread.start()
+    # watch = AIOWatchdog(watch_dir, event_handler=EventHandler(queue=queue), observer=observer)
+    # watch.start()
 
     await worker(queue)
-
-    # try:
-    #     while True:
-    #         await asyncio.sleep(1)
-    # except asyncio.CancelledError:
-    #     pass
-    # finally:
-    #     print("Stopping observer")
-    # observer.stop()
-    # observer.join()
+    # for _ in range(20):
+    #     await asyncio.sleep(1)
+    observer.stop()
+    observer.join()
+    # watch.stop()
 
 
+# asyncio.get_event_loop().run_until_complete(watch_fs(WATCH_DIRECTORY))
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(watch_fs(WATCH_DIRECTORY))
