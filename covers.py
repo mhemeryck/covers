@@ -27,9 +27,7 @@ LOG_CONFIG = dict(
 logging.config.dictConfig(LOG_CONFIG)
 logger = logging.getLogger(__name__)
 
-TOPIC_REGEX = re.compile(
-    r"^(?P<base_topic>\w+)/(?P<entity>(input|relay|cover))/(?P<name>\w+)/(set|state)$"
-)
+TOPIC_REGEX = re.compile(r"^(?P<base_topic>\w+)/(?P<entity>(input|relay|cover))/(?P<name>\w+)/(set|state)$")
 TOPIC_FORMAT = "{base_topic}/{entity}/{name}/{action}"
 
 
@@ -94,9 +92,7 @@ class Shade:
         self._direction = self._DIRECTION_STOPPED
         self._direction_lock = asyncio.Lock()
         self._sleep_time = sleep_time
-        self._increment = int(
-            round(self._max_position * self._sleep_time / self._max_time)
-        )
+        self._increment = int(round(self._max_position * self._sleep_time / self._max_time))
 
         self._open_relay_lock = asyncio.Lock()
         self._close_relay_lock = asyncio.Lock()
@@ -195,9 +191,7 @@ class Shade:
             self._mqtt_client.subscribe(self._open_relay_state_topic),
             self._mqtt_client.subscribe(self._close_relay_state_topic),
         )
-        async with self._mqtt_client.filtered_messages(
-            self._relay_state_filter
-        ) as messages:
+        async with self._mqtt_client.filtered_messages(self._relay_state_filter) as messages:
             async for message in messages:
                 if message.topic not in (
                     self._open_relay_state_topic,
@@ -223,9 +217,7 @@ class Shade:
         """Subscribe to and handle cover command topic"""
         self._logger.debug("subscribe to and handle cover command topic")
         await self._mqtt_client.subscribe(self._cover_command_topic)
-        async with self._mqtt_client.filtered_messages(
-            self._cover_command_topic
-        ) as messages:
+        async with self._mqtt_client.filtered_messages(self._cover_command_topic) as messages:
             async for message in messages:
                 if message.topic != self._cover_command_topic:
                     continue
@@ -247,10 +239,7 @@ class Shade:
 
             self.position = new_position
             self._logger.debug(f"position: {self.position}")
-            if (
-                0 < self.position < self._max_position
-                and self._direction != Shade._DIRECTION_STOPPED
-            ):
+            if 0 < self.position < self._max_position and self._direction != Shade._DIRECTION_STOPPED:
                 await self._mqtt_client.publish(
                     self._cover_position_topic,
                     str(self.position).encode(),
@@ -453,8 +442,7 @@ def _shades_from_config(
 ) -> typing.Iterable[Shade]:
     """Build list of shades from yaml config file"""
     return [
-        Shade(name, relays["open"], relays["close"], host, cover_base, relay_base)
-        for name, relays in config.items()
+        Shade(name, relays["open"], relays["close"], host, cover_base, relay_base) for name, relays in config.items()
     ]
 
 
