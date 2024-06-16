@@ -13,6 +13,7 @@ pyyaml = "^6.0.1"
 aiofiles = "^23.2.1"
 watchdog = "^4.0.1"
 watchfiles = "^0.22.0"
+types-aiofiles = "^23.2.0.20240403"
 
 [tool.poetry.dev-dependencies]
 

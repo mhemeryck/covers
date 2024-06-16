@@ -1,12 +1,13 @@
 import asyncio
-import os
 import logging
+import os
 import re
 import typing
 
 import aiofiles
-from aiofiles.threadpool.binary import AsyncBufferedReader
 import watchfiles
+from aiofiles.threadpool.binary import AsyncBufferedReader
+from aiofiles.threadpool.text import AsyncTextIOWrapper
 
 WATCH_DIRECTORY = "./fixtures"
 
@@ -52,6 +53,9 @@ async def watcher() -> None:
 
 
 class Device:
+    PAYLOAD_ON = "1"
+    PAYLOAD_OFF = "0"
+
     def __init__(self, filename: str) -> None:
         self._filename = filename
         self._state = False
@@ -61,9 +65,9 @@ class Device:
     def __repr__(self) -> str:
         return f"<Device {self._filename} - {self._state}>"
 
-    async def _get_file_handle(self) -> AsyncBufferedReader:
+    async def _get_file_handle(self) -> AsyncTextIOWrapper:
         if self._file_handle is None:
-            self._file_handle = await aiofiles.open(self._filename, "wb+")
+            self._file_handle = await aiofiles.open(self._filename, "w+")
         return self._file_handle
 
     async def read(self) -> bool:
@@ -71,17 +75,18 @@ class Device:
         async with self._state_lock:
             fh = await self._get_file_handle()
             await fh.seek(0)
-            data = await fh.read()
-            self._state = data == b"1\n"
+            data = await fh.read(1)
+            logger.debug(data)
+            self._state = data == Device.PAYLOAD_ON
             return self._state
 
     async def write(self, state: bool) -> None:
-        payload = b"1\n" if state else b"0\n"
+        payload = Device.PAYLOAD_ON if state else Device.PAYLOAD_OFF
         logger.debug(payload)
         async with self._state_lock:
             fh = await self._get_file_handle()
             await fh.seek(0)
-            n = await fh.write(payload)
+            await fh.write(payload)
         await self.read()
         logger.debug("finished writing state %s", state)
 
@@ -96,7 +101,7 @@ def devices() -> typing.Dict[str, Device]:
     return _DEVICES
 
 
-async def writer(device) -> None:
+async def backgroundwriter(device) -> None:
     logger.debug("sleeping")
     await asyncio.sleep(2)
     logger.debug("trigger to true")
@@ -112,11 +117,11 @@ async def writer(device) -> None:
 
 
 async def main() -> None:
-    filenames = crawl(WATCH_DIRECTORY)
     jobs = []
-    for filename in filenames:
-        device = devices()[filename]
-        jobs += [writer(device)]
+    # filenames = crawl(WATCH_DIRECTORY)
+    # for filename in filenames:
+    #     device = devices()[filename]
+    #     jobs += [backgroundwriter(device)]
     jobs.append(watcher())
     await asyncio.gather(*jobs)
 
