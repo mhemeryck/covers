@@ -27,6 +27,7 @@ def crawl(folder: str) -> typing.List[str]:
 
 
 def only_modified(change: watchfiles.Change, path: str) -> bool:
+    print(change, path)
     return change == watchfiles.Change.modified
 
 
@@ -43,26 +44,28 @@ class Device:
         return self._file_handle
 
     async def _read_state(self) -> bool:
+        print("reading")
         async with self._state_lock:
             fh = await self._get_file_handle()
             await fh.seek(0)
             data = await fh.read()
-        self._state = data == b"1\n"
-        return self._state
+            self._state = data == b"1\n"
+            return self._state
 
     async def _write_state(self, state: bool) -> None:
-        # early return
-        if state == self._state:
-            return
+        payload = b"1\n" if state else b"0\n"
+        print(payload)
         async with self._state_lock:
             fh = await self._get_file_handle()
             await fh.seek(0)
-            payload = b"1\n" if state else b"0\n"
-            await fh.write(payload)
-        self._state = state
+            n = await fh.write(payload)
+            print("written", n, payload)
+        # await self._read_state()
+        print("finished writing state", state)
 
     async def read(self) -> typing.AsyncGenerator[bool, None]:
-        async for _ in watchfiles.awatch(self._filename, force_polling=True, watch_filter=only_modified):
+        async for _ in watchfiles.awatch(self._filename, force_polling=True):
+            print("events", self._filename)
             yield await self._read_state()
 
     async def write(self, state: bool) -> None:
@@ -70,15 +73,20 @@ class Device:
 
 
 async def writer(device) -> None:
+    print("sleeping")
     await asyncio.sleep(2)
+    print("trigger to true")
     await device.write(True)
+    print("sleeping")
     await asyncio.sleep(2)
+    print("trigger to false")
+    print("device state", device._state)
     await device.write(False)
 
 
 async def reader(device) -> None:
     async for event in device.read():
-        print(device._filename, event)
+        print(device._filename, event, device._state)
 
 
 async def main() -> None:
