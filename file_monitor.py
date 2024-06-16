@@ -23,21 +23,28 @@ logging.basicConfig(
 )
 
 
-def crawl(folder: str) -> typing.List[str]:
-    result = []
-    for root, _, files in os.walk(folder):
-        for f in files:
-            filename = os.path.join(root, f)
-            filename = os.path.abspath(filename)
-            if _FILENAME_PATTERN.match(filename) is not None:
-                result.append(filename)
-    return result
-
-
 def file_filter(change: watchfiles.Change, path: str) -> bool:
     return change == watchfiles.Change.modified and any(
         path.endswith(f"{ending}_value") for ending in ("di", "do", "ro")
     )
+
+
+class Watcher:
+    """Data structure to monitor all devices"""
+
+    def __init__(self, folder: str) -> None:
+        self._folder = folder
+        self._devices: typing.Dict[str, Device] = {}
+
+    def crawl(self, folder: str) -> typing.List[str]:
+        result = []
+        for root, _, files in os.walk(folder):
+            for f in files:
+                filename = os.path.join(root, f)
+                filename = os.path.abspath(filename)
+                if _FILENAME_PATTERN.match(filename) is not None:
+                    result.append(filename)
+        return result
 
 
 async def watcher() -> None:
