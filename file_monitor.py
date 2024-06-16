@@ -6,7 +6,6 @@ import typing
 
 import aiofiles
 import watchfiles
-from aiofiles.threadpool.binary import AsyncBufferedReader
 from aiofiles.threadpool.text import AsyncTextIOWrapper
 
 WATCH_DIRECTORY = "./fixtures"
@@ -77,7 +76,13 @@ class Device:
             await fh.seek(0)
             data = await fh.read(1)
             logger.debug(data)
-            self._state = data == Device.PAYLOAD_ON
+            match data:
+                case Device.PAYLOAD_ON:
+                    self._state = True
+                case Device.PAYLOAD_OFF:
+                    self._state = False
+                case _:
+                    logger.warning("Could not match state: %s", data)
             return self._state
 
     async def write(self, state: bool) -> None:
