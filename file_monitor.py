@@ -71,7 +71,6 @@ class Device:
             await fh.seek(0)
             await fh.writelines([payload])
             await fh.flush()
-        await self.read()
         logger.debug("finished writing state %s", state)
 
 
@@ -92,7 +91,6 @@ class Unispy:
                     full_path = os.path.abspath(filename)
                     device_name = "{device_fmt}_{io_group}_{number}".format(**match.groupdict())
                     for_filename[full_path] = for_device_name[device_name] = Device(full_path)
-        logger.debug(for_device_name)
         return for_filename, for_device_name
 
     async def read(self) -> None:
