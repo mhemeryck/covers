@@ -75,72 +75,61 @@ class Device:
         logger.debug("finished writing state %s", state)
 
 
-class Watcher:
+class Unispy:
+    """Unispy watches a unipi for changes and pushes out events"""
+
     def __init__(self, folder: str) -> None:
         self._folder = folder
-        self._devices_for_filename = self._find_devices_by_filename(folder)
-        self._device_for_name: typing.Dict[str, Device] = {}
+        self._devices_for_filename, self._devices_for_device_name = self._crawl(folder)
 
-    def _crawl(self, folder: str) -> typing.List[typing.Tuple[str, str]]:
-        result = []
+    def _crawl(self, folder: str) -> typing.Tuple[typing.Dict[str, Device], typing.Dict[str, Device]]:
+        for_filename = {}
+        for_device_name = {}
         for root, _, files in os.walk(folder):
             for f in files:
                 filename = os.path.join(root, f)
-                filename = os.path.abspath(filename)
-                if match := _FILENAME_PATTERN.match(filename) and match is not None:
+                if (match := _FILENAME_PATTERN.match(filename)) and match is not None:
+                    full_path = os.path.abspath(filename)
                     device_name = "{device_fmt}_{io_group}_{number}".format(**match.groupdict())
-                    result.append((device_name, filename))
-        return result
-
-    def _find_devices_by_filename(self, folder: str) -> typing.Dict[str, Device]:
-        "Create initial mapping filename to Device entry"
-        return {filename: Device(filename) for _, filename in self._crawl(folder)}
-
-    def _find_devices_by_name(self, device_name: str) -> Device:
-        # TODO: fixme
-        return self._device_for_name[device_name]
-
-    def _device_for_filename(self, filename: str) -> Device:
-        return self._devices_for_filename[os.path.abspath(filename)]
+                    for_filename[full_path] = for_device_name[device_name] = Device(full_path)
+        logger.debug(for_device_name)
+        return for_filename, for_device_name
 
     async def read(self) -> None:
         async for event in watchfiles.awatch(self._folder, force_polling=True, watch_filter=device_filter):
             logger.debug(event)
             for _, filename in tuple(event):
                 logger.debug(filename)
-                device = self._device_for_filename(filename)
+                device = self._devices_for_filename[os.path.abspath(filename)]
                 logger.debug(f"{device}, {device._state}")
                 new = await device.read()
                 logger.debug(f"{device} - {new} - {device._state}")
 
     async def write(self, device_name: str, state: bool) -> None:
         """Update device with name to state"""
-        await self._device_for_name[device_name].write(state)
+        await self._devices_for_device_name[device_name].write(state)
 
 
-async def backgroundwriter(device) -> None:
+async def backgroundwriter(spy: Unispy) -> None:
     logger.debug("sleeping")
     await asyncio.sleep(2)
     logger.debug("trigger to true")
-    await device.write(True)
+    await spy.write("di_1_03", True)
     logger.debug("sleeping")
     await asyncio.sleep(2)
     logger.debug("trigger to false")
-    await device.write(False)
+    await spy.write("di_1_03", False)
     logger.debug("sleeping")
     await asyncio.sleep(2)
-    logger.debug("trigger to true")
-    await device.write(True)
+    # logger.debug("trigger to true")
+    # await spy.write("di_1_03", True)
 
 
 async def main() -> None:
-    watcher = Watcher(WATCH_DIRECTORY)
+    spy = Unispy(WATCH_DIRECTORY)
     jobs = []
-    # filenames = crawl(WATCH_DIRECTORY)
-    # for filename in filenames:
-    #     device = devices()[filename]
-    #     jobs += [backgroundwriter(device)]
-    jobs.append(watcher.read())
+    jobs.append(backgroundwriter(spy))
+    jobs.append(spy.read())
     await asyncio.gather(*jobs)
 
 
