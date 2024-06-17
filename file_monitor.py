@@ -77,7 +77,8 @@ class Device:
             logger.debug("writing %s", self)
             fh = await self._get_write_file_handle()
             await fh.seek(0)
-            await fh.writelines(payload)
+            await fh.write(f"{payload}\n")
+            # await fh.writelines([payload])
             await fh.flush()
         # logger.debug("finished writing state %s", state)
 
