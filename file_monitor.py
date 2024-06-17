@@ -101,9 +101,9 @@ class Unispy:
             for _, filename in tuple(event):
                 logger.debug(filename)
                 device = self._devices_for_filename[os.path.abspath(filename)]
-                logger.debug(f"{device}, {device._state}")
-                new = await device.read()
-                logger.debug(f"{device} - {new} - {device._state}")
+                logger.debug(device)
+                await device.read()
+                logger.debug(device)
 
     async def write(self, device_name: str, state: bool) -> None:
         """Update device with name to state"""
