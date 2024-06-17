@@ -23,39 +23,10 @@ logging.basicConfig(
 )
 
 
-def file_filter(change: watchfiles.Change, path: str) -> bool:
+def device_filter(change: watchfiles.Change, path: str) -> bool:
     return change == watchfiles.Change.modified and any(
         path.endswith(f"{ending}_value") for ending in ("di", "do", "ro")
     )
-
-
-class Watcher:
-    """Data structure to monitor all devices"""
-
-    def __init__(self, folder: str) -> None:
-        self._folder = folder
-        self._devices: typing.Dict[str, Device] = {}
-
-    def crawl(self, folder: str) -> typing.List[str]:
-        result = []
-        for root, _, files in os.walk(folder):
-            for f in files:
-                filename = os.path.join(root, f)
-                filename = os.path.abspath(filename)
-                if _FILENAME_PATTERN.match(filename) is not None:
-                    result.append(filename)
-        return result
-
-
-async def watcher() -> None:
-    async for event in watchfiles.awatch(WATCH_DIRECTORY, force_polling=True, watch_filter=file_filter):
-        logger.debug(event)
-        for _, filename in tuple(event):
-            logger.debug(filename)
-            device = devices()[os.path.abspath(filename)]
-            logger.debug(f"{device}, {device._state}")
-            new = await device.read()
-            logger.debug(f"{device} - {new} - {device._state}")
 
 
 class Device:
@@ -98,19 +69,45 @@ class Device:
         async with self._state_lock:
             fh = await self._get_file_handle()
             await fh.seek(0)
-            await fh.write(payload)
+            await fh.writelines([payload])
+            await fh.flush()
         await self.read()
         logger.debug("finished writing state %s", state)
 
 
-_DEVICES: typing.Dict[str, Device] = {}
+class Watcher:
+    """Data structure to monitor all devices"""
 
+    def __init__(self, folder: str) -> None:
+        self._folder = folder
+        self._devices = self._find_devices(folder)
 
-def devices() -> typing.Dict[str, Device]:
-    global _DEVICES
-    if not _DEVICES:
-        _DEVICES = {filename: Device(filename) for filename in crawl(WATCH_DIRECTORY)}
-    return _DEVICES
+    def _crawl(self, folder: str) -> typing.List[str]:
+        result = []
+        for root, _, files in os.walk(folder):
+            for f in files:
+                filename = os.path.join(root, f)
+                filename = os.path.abspath(filename)
+                if _FILENAME_PATTERN.match(filename) is not None:
+                    result.append(filename)
+        return result
+
+    def _find_devices(self, folder: str) -> typing.Dict[str, Device]:
+        "Create initial mapping filename to Device entry"
+        return {filename: Device(filename) for filename in self._crawl(folder)}
+
+    def _device_for(self, filename: str) -> Device:
+        return self._devices[os.path.abspath(filename)]
+
+    async def watch(self) -> None:
+        async for event in watchfiles.awatch(self._folder, force_polling=True, watch_filter=device_filter):
+            logger.debug(event)
+            for _, filename in tuple(event):
+                logger.debug(filename)
+                device = self._device_for(filename)
+                logger.debug(f"{device}, {device._state}")
+                new = await device.read()
+                logger.debug(f"{device} - {new} - {device._state}")
 
 
 async def backgroundwriter(device) -> None:
@@ -129,12 +126,13 @@ async def backgroundwriter(device) -> None:
 
 
 async def main() -> None:
+    watcher = Watcher(WATCH_DIRECTORY)
     jobs = []
     # filenames = crawl(WATCH_DIRECTORY)
     # for filename in filenames:
     #     device = devices()[filename]
     #     jobs += [backgroundwriter(device)]
-    jobs.append(watcher())
+    jobs.append(watcher.watch())
     await asyncio.gather(*jobs)
 
 
