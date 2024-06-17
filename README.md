@@ -40,12 +40,12 @@ Help:
 The config file is supposed to be in this format:
 
 ```yaml
-    office_side:
-      open: "3_14"
-      close:"3_13"
-    office_front:
-      open: "3_11"
-      close: "3_12"
+office_side:
+  open: "3_14"
+  close: "3_13"
+office_front:
+  open: "3_11"
+  close: "3_12"
 ```
 
 ## homeassistant integration

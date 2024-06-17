@@ -76,38 +76,46 @@ class Device:
 
 
 class Watcher:
-    """Data structure to monitor all devices"""
-
     def __init__(self, folder: str) -> None:
         self._folder = folder
-        self._devices = self._find_devices(folder)
+        self._devices_for_filename = self._find_devices_by_filename(folder)
+        self._device_for_name: typing.Dict[str, Device] = {}
 
-    def _crawl(self, folder: str) -> typing.List[str]:
+    def _crawl(self, folder: str) -> typing.List[typing.Tuple[str, str]]:
         result = []
         for root, _, files in os.walk(folder):
             for f in files:
                 filename = os.path.join(root, f)
                 filename = os.path.abspath(filename)
-                if _FILENAME_PATTERN.match(filename) is not None:
-                    result.append(filename)
+                if match := _FILENAME_PATTERN.match(filename) and match is not None:
+                    device_name = "{device_fmt}_{io_group}_{number}".format(**match.groupdict())
+                    result.append((device_name, filename))
         return result
 
-    def _find_devices(self, folder: str) -> typing.Dict[str, Device]:
+    def _find_devices_by_filename(self, folder: str) -> typing.Dict[str, Device]:
         "Create initial mapping filename to Device entry"
-        return {filename: Device(filename) for filename in self._crawl(folder)}
+        return {filename: Device(filename) for _, filename in self._crawl(folder)}
 
-    def _device_for(self, filename: str) -> Device:
-        return self._devices[os.path.abspath(filename)]
+    def _find_devices_by_name(self, device_name: str) -> Device:
+        # TODO: fixme
+        return self._device_for_name[device_name]
 
-    async def watch(self) -> None:
+    def _device_for_filename(self, filename: str) -> Device:
+        return self._devices_for_filename[os.path.abspath(filename)]
+
+    async def read(self) -> None:
         async for event in watchfiles.awatch(self._folder, force_polling=True, watch_filter=device_filter):
             logger.debug(event)
             for _, filename in tuple(event):
                 logger.debug(filename)
-                device = self._device_for(filename)
+                device = self._device_for_filename(filename)
                 logger.debug(f"{device}, {device._state}")
                 new = await device.read()
                 logger.debug(f"{device} - {new} - {device._state}")
+
+    async def write(self, device_name: str, state: bool) -> None:
+        """Update device with name to state"""
+        await self._device_for_name[device_name].write(state)
 
 
 async def backgroundwriter(device) -> None:
@@ -132,7 +140,7 @@ async def main() -> None:
     # for filename in filenames:
     #     device = devices()[filename]
     #     jobs += [backgroundwriter(device)]
-    jobs.append(watcher.watch())
+    jobs.append(watcher.read())
     await asyncio.gather(*jobs)
 
 
