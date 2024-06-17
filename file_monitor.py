@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # TODO: move to global logging
 logging.basicConfig(
     level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    format="%(asctime)s [%(levelname)s - %(funcName)s] %(message)s",
 )
 
 
@@ -37,21 +37,28 @@ class Device:
         self._filename = filename
         self._state = False
         self._state_lock = asyncio.Lock()
-        self._file_handle = None
+        self._read_file_handle = None
+        self._write_file_handle = None
 
     def __repr__(self) -> str:
         return f"<Device {self._filename} - {self._state}>"
 
-    async def _get_file_handle(self) -> AsyncTextIOWrapper:
-        if self._file_handle is None:
-            self._file_handle = await aiofiles.open(self._filename, "w+")
-        return self._file_handle
+    async def _get_write_file_handle(self) -> AsyncTextIOWrapper:
+        if self._write_file_handle is None:
+            self._write_file_handle = await aiofiles.open(self._filename, "w")
+        return self._write_file_handle
+
+    async def _get_read_file_handle(self) -> AsyncTextIOWrapper:
+        if self._read_file_handle is None:
+            self._read_file_handle = await aiofiles.open(self._filename, "r")
+        return self._read_file_handle
 
     async def read(self) -> bool:
-        logger.debug("reading")
         async with self._state_lock:
-            fh = await self._get_file_handle()
+            logger.debug("reading %s", self)
+            fh = await self._get_read_file_handle()
             await fh.seek(0)
+            logger.debug("file location %s", (await fh.tell()))
             data = await fh.read(1)
             logger.debug(data)
             match data:
@@ -67,11 +74,12 @@ class Device:
         payload = Device.PAYLOAD_ON if state else Device.PAYLOAD_OFF
         logger.debug(payload)
         async with self._state_lock:
-            fh = await self._get_file_handle()
+            logger.debug("writing %s", self)
+            fh = await self._get_write_file_handle()
             await fh.seek(0)
             await fh.writelines([payload])
             await fh.flush()
-        logger.debug("finished writing state %s", state)
+        # logger.debug("finished writing state %s", state)
 
 
 class Unispy:
@@ -99,9 +107,9 @@ class Unispy:
             for _, filename in tuple(event):
                 logger.debug(filename)
                 device = self._devices_for_filename[os.path.abspath(filename)]
-                logger.debug(device)
+                # logger.debug(device)
                 await device.read()
-                logger.debug(device)
+                # logger.debug(device)
 
     async def write(self, device_name: str, state: bool) -> None:
         """Update device with name to state"""
