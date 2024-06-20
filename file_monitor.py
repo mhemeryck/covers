@@ -58,7 +58,6 @@ class Device:
             logger.debug("reading %s", self)
             fh = await self._get_read_file_handle()
             await fh.seek(0)
-            logger.debug("file location %s", (await fh.tell()))
             data = await fh.read(1)
             logger.debug(data)
             match data:
@@ -117,15 +116,15 @@ class Unispy:
         await self._devices_for_device_name[device_name].write(state)
 
 
-async def backgroundwriter(spy: Unispy) -> None:
+async def backgroundwriter(spy: Unispy, device_name: str) -> None:
     logger.debug("sleeping")
     await asyncio.sleep(2)
     logger.debug("trigger to true")
-    await spy.write("di_1_03", True)
+    await spy.write(device_name, False)
     logger.debug("sleeping")
     await asyncio.sleep(2)
     logger.debug("trigger to false")
-    await spy.write("di_1_03", False)
+    await spy.write(device_name, True)
     logger.debug("sleeping")
     await asyncio.sleep(2)
     # logger.debug("trigger to true")
@@ -135,7 +134,9 @@ async def backgroundwriter(spy: Unispy) -> None:
 async def main() -> None:
     spy = Unispy(WATCH_DIRECTORY)
     jobs = []
-    jobs.append(backgroundwriter(spy))
+    for n in range(1, 13):
+        device_name = f"ro_2_{n:02d}"
+        jobs.append(backgroundwriter(spy, device_name))
     jobs.append(spy.read())
     await asyncio.gather(*jobs)
 
