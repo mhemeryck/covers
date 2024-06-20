@@ -82,6 +82,9 @@ class Device:
         # logger.debug("finished writing state %s", state)
 
 
+EventType = typing.Tuple[Device, bool]
+
+
 class Unispy:
     """Unispy watches a unipi for changes and pushes out events"""
 
@@ -101,15 +104,16 @@ class Unispy:
                     for_filename[full_path] = for_device_name[device_name] = Device(full_path)
         return for_filename, for_device_name
 
-    async def read(self) -> None:
+    async def read(self) -> typing.AsyncGenerator[EventType, None]:
         async for event in watchfiles.awatch(self._folder, force_polling=True, watch_filter=device_filter):
             logger.debug(event)
             for _, filename in tuple(event):
-                logger.debug(filename)
+                # logger.debug(filename)
                 device = self._devices_for_filename[os.path.abspath(filename)]
                 # logger.debug(device)
-                await device.read()
+                state = await device.read()
                 # logger.debug(device)
+                yield (device, state)
 
     async def write(self, device_name: str, state: bool) -> None:
         """Update device with name to state"""
@@ -131,13 +135,19 @@ async def backgroundwriter(spy: Unispy, device_name: str) -> None:
     # await spy.write("di_1_03", True)
 
 
+async def backgroundreader(spy: Unispy) -> None:
+    async for device, state in spy.read():
+        logger.debug("background reader got %s - %s", device, state)
+
+
 async def main() -> None:
     spy = Unispy(WATCH_DIRECTORY)
     jobs = []
     for n in range(1, 13):
         device_name = f"ro_2_{n:02d}"
         jobs.append(backgroundwriter(spy, device_name))
-    jobs.append(spy.read())
+    jobs.append(backgroundreader(spy))
+    # jobs.append(spy.read())
     await asyncio.gather(*jobs)
 
 
