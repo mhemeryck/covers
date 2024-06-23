@@ -29,7 +29,7 @@ def device_filter(change: watchfiles.Change, path: str) -> bool:
     )
 
 
-class Device:
+class IO:
     PAYLOAD_ON = "1"
     PAYLOAD_OFF = "0"
 
@@ -61,16 +61,16 @@ class Device:
             data = await fh.read(1)
             logger.debug(data)
             match data:
-                case Device.PAYLOAD_ON:
+                case IO.PAYLOAD_ON:
                     self._state = True
-                case Device.PAYLOAD_OFF:
+                case IO.PAYLOAD_OFF:
                     self._state = False
                 case _:
                     logger.warning("Could not match state: %s", data)
             return self._state
 
     async def write(self, state: bool) -> None:
-        payload = Device.PAYLOAD_ON if state else Device.PAYLOAD_OFF
+        payload = IO.PAYLOAD_ON if state else IO.PAYLOAD_OFF
         logger.debug(payload)
         async with self._state_lock:
             logger.debug("writing %s", self)
@@ -82,7 +82,7 @@ class Device:
         # logger.debug("finished writing state %s", state)
 
 
-EventType = typing.Tuple[Device, bool]
+EventType = typing.Tuple[IO, bool]
 
 
 class Unispy:
@@ -92,7 +92,7 @@ class Unispy:
         self._folder = folder
         self._devices_for_filename, self._devices_for_device_name = self._crawl(folder)
 
-    def _crawl(self, folder: str) -> typing.Tuple[typing.Dict[str, Device], typing.Dict[str, Device]]:
+    def _crawl(self, folder: str) -> typing.Tuple[typing.Dict[str, IO], typing.Dict[str, IO]]:
         for_filename = {}
         for_device_name = {}
         for root, _, files in os.walk(folder):
@@ -101,7 +101,7 @@ class Unispy:
                 if (match := _FILENAME_PATTERN.match(filename)) and match is not None:
                     full_path = os.path.abspath(filename)
                     device_name = "{device_fmt}_{io_group}_{number}".format(**match.groupdict())
-                    for_filename[full_path] = for_device_name[device_name] = Device(full_path)
+                    for_filename[full_path] = for_device_name[device_name] = IO(full_path)
         return for_filename, for_device_name
 
     async def read(self) -> typing.AsyncGenerator[EventType, None]:
