@@ -140,15 +140,47 @@ async def backgroundreader(spy: Unispy) -> None:
         logger.debug("background reader got %s - %s", device, state)
 
 
+class Device:
+    """Manages a single unipi device"""
+
+    def __init__(self) -> None:
+        self._spy = Unispy(WATCH_DIRECTORY)
+
+    async def _read_file_watcher(self) -> None:
+        async for device, state in self._spy.read():
+            logger.debug("background reader got %s - %s", device, state)
+
+    async def run(self) -> None:
+        """Run main event loop"""
+        await self._read_file_watcher()
+
+
+class PushButton:
+    """Contains the data for a push button"""
+
+    def __init__(self, identifier: str, state: bool) -> None:
+        self._identifier = identifier
+        self._state = state
+
+    def write(self, state: bool) -> None:
+        self._state = state
+
+
+class Light:
+    """Contains the data for a light"""
+
+
 async def main() -> None:
-    spy = Unispy(WATCH_DIRECTORY)
-    jobs = []
-    for n in range(1, 13):
-        device_name = f"ro_2_{n:02d}"
-        jobs.append(backgroundwriter(spy, device_name))
-    jobs.append(backgroundreader(spy))
-    # jobs.append(spy.read())
-    await asyncio.gather(*jobs)
+    # spy = Unispy(WATCH_DIRECTORY)
+    # jobs = []
+    # for n in range(1, 13):
+    #     device_name = f"ro_2_{n:02d}"
+    #     jobs.append(backgroundwriter(spy, device_name))
+    # jobs.append(backgroundreader(spy))
+    # # jobs.append(spy.read())
+    # await asyncio.gather(*jobs)
+    device = Device()
+    await device.run()
 
 
 if __name__ == "__main__":
