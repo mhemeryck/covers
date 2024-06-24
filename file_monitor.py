@@ -147,6 +147,22 @@ class Device:
 
     def __init__(self) -> None:
         self._spy = Unispy(WATCH_DIRECTORY)
+        # Example config
+        # TODO: have unispy read the available files and match against config
+        self._config = [
+            IOEntityMap(
+                "shady/io/di_1_01",
+                "shady/push_buttons/office",
+            ),
+            LightAutomation(
+                PushButton("shady/push_buttons/office", False),
+                Light("shady/lights/office", False),
+            ),
+            IOEntityMap(
+                "shady/io/ro_2_01",
+                "shady/lights/office",
+            ),
+        ]
 
     async def _read_file_watcher(self) -> None:
         async for device, state in self._spy.read():
@@ -155,6 +171,12 @@ class Device:
     async def run(self) -> None:
         """Run main event loop"""
         await self._read_file_watcher()
+
+
+@dataclasses.dataclass
+class IOEntityMap:
+    io_identifier: str
+    entity_identifier: str
 
 
 @dataclasses.dataclass
