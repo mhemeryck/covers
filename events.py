@@ -1,7 +1,16 @@
 import asyncio
 import dataclasses
 import enum
+import logging
 import typing
+
+logger = logging.getLogger(__name__)
+
+# TODO: move to global logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s - %(funcName)s] %(message)s",
+)
 
 
 class EventType(enum.StrEnum):
@@ -43,18 +52,35 @@ async def emit() -> typing.AsyncGenerator[Event, None]:
         await asyncio.sleep(1)
 
 
-async def process() -> None:
-    """Just print whatever's happening"""
-    async for event in emit():
+async def qemit(q: asyncio.Queue[Event]) -> None:
+    count = 0
+    while count < 10:
+        await q.put(
+            Event(
+                Identifier("shady", EventType.IO, "di_1_01"),
+                count % 2 == 0,
+            )
+        )
+        count += 1
+        await asyncio.sleep(1)
+
+
+async def process(q: asyncio.Queue[Event]) -> None:
+    while True:
+        event = await q.get()
         match event:
             case Event(ident, state):
-                print(ident, state)
+                logger.debug("incoming ident %s - state %s", ident, state)
                 found = _MAPPINGS.get(ident)
-                print(found)
+                if found:
+                    logger.debug("outgoing ident %s - state %s", found, state)
+                    await q.put(Event(found, state))
+        q.task_done()
 
 
 async def run() -> None:
-    await process()
+    queue = asyncio.Queue()
+    await asyncio.gather(*[qemit(queue), process(queue)])
 
 
 if __name__ == "__main__":
