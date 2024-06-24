@@ -55,9 +55,10 @@ async def emit() -> typing.AsyncGenerator[Event, None]:
 async def qemit(q: asyncio.Queue[Event]) -> None:
     count = 0
     while count < 10:
+        device_name = "shady" if count != 7 else "slim"
         await q.put(
             Event(
-                Identifier("shady", EventType.IO, "di_1_01"),
+                Identifier(device_name, EventType.IO, "di_1_01"),
                 count % 2 == 0,
             )
         )
@@ -71,8 +72,7 @@ async def process(q: asyncio.Queue[Event]) -> None:
         match event:
             case Event(ident, state):
                 logger.debug("incoming ident %s - state %s", ident, state)
-                found = _MAPPINGS.get(ident)
-                if found:
+                if found := _MAPPINGS.get(ident):
                     logger.debug("outgoing ident %s - state %s", found, state)
                     await q.put(Event(found, state))
         q.task_done()
