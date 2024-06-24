@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import logging
 import os
 import re
@@ -13,6 +14,7 @@ WATCH_DIRECTORY = "./fixtures"
 _FILENAME_PATTERN = re.compile(
     r"(.*)/io_group(1|2|3)/(?P<device_fmt>di|do|ro)_(?P<io_group>1|2|3)_(?P<number>\d{2})/(di|do|ro)_value$"
 )
+_IDENTIFIER_FORMAT = "{device_name}/{entity_type}/{entity_name}"
 
 logger = logging.getLogger(__name__)
 
@@ -155,19 +157,47 @@ class Device:
         await self._read_file_watcher()
 
 
-class PushButton:
-    """Contains the data for a push button"""
-
-    def __init__(self, identifier: str, state: bool) -> None:
-        self._identifier = identifier
-        self._state = state
-
-    def write(self, state: bool) -> None:
-        self._state = state
+@dataclasses.dataclass
+class EntityMixin:
+    identifier: str
+    state: bool
 
 
-class Light:
-    """Contains the data for a light"""
+@dataclasses.dataclass
+class PushButton(EntityMixin):
+    """Single NO on / off push button"""
+
+
+@dataclasses.dataclass
+class Light(EntityMixin):
+    """Single on / off push light"""
+
+
+@dataclasses.dataclass
+class Motor(EntityMixin):
+    """Single on / off motor control"""
+
+
+@dataclasses.dataclass
+class Cover:
+    """Single cover, wrapping 2 motor controls: on / off"""
+
+    motor_up: Motor
+    motor_down: Motor
+    position: int
+
+
+@dataclasses.dataclass
+class LightAutomation:
+    push_button: PushButton
+    light: Light
+
+
+@dataclasses.dataclass
+class CoverAutomation:
+    push_button_up: PushButton
+    push_button_down: PushButton
+    cover: Cover
 
 
 async def main() -> None:
