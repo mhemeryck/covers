@@ -66,21 +66,27 @@ async def qemit(q: asyncio.Queue[Event]) -> None:
         await asyncio.sleep(1)
 
 
-async def process(q: asyncio.Queue[Event]) -> None:
+async def process(q: asyncio.Queue[Event], n: int) -> None:
     while True:
         event = await q.get()
         match event:
             case Event(ident, state):
-                logger.debug("incoming ident %s - state %s", ident, state)
+                logger.debug("%d - incoming ident %s - state %s", n, ident, state)
                 if found := _MAPPINGS.get(ident):
-                    logger.debug("outgoing ident %s - state %s", found, state)
+                    logger.debug("%d - outgoing ident %s - state %s", n, found, state)
                     await q.put(Event(found, state))
         q.task_done()
 
 
 async def run() -> None:
     queue = asyncio.Queue()
-    await asyncio.gather(*[qemit(queue), process(queue)])
+    await asyncio.gather(
+        *[
+            qemit(queue),
+            process(queue, 0),
+            process(queue, 1),
+        ]
+    )
 
 
 if __name__ == "__main__":
