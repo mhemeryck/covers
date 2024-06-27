@@ -14,6 +14,7 @@ logging.basicConfig(
 
 
 class EventType(enum.StrEnum):
+    BASE = enum.auto()
     IO = enum.auto()
     PUSH_BUTTON = enum.auto()
     LIGHT = enum.auto()
@@ -30,6 +31,52 @@ class Identifier:
 class Event:
     identifier: Identifier
     state: bool
+
+
+@dataclasses.dataclass
+class Base:
+    name: str
+    state: bool
+
+    def _event_type(self) -> EventType:
+        raise NotADirectoryError()
+
+    def identifier(self) -> Identifier:
+        return Identifier("shady", self._event_type(), self.name)
+
+
+@dataclasses.dataclass
+class IO(Base):
+    def _event_type(self) -> EventType:
+        return EventType.IO
+
+
+@dataclasses.dataclass
+class PushButton(Base):
+    def _event_type(self) -> EventType:
+        return EventType.PUSH_BUTTON
+
+
+@dataclasses.dataclass
+class Light(Base):
+    def _event_type(self) -> EventType:
+        return EventType.LIGHT
+
+
+Entity = PushButton | Light
+Entry = IO | Entity
+
+
+class Master:
+    """Main master controlling flow of events"""
+
+    def __init__(self) -> None:
+        self._entries = [
+            IO("di_1_01", False),
+            PushButton("office", False),
+            Light("office", False),
+            IO("ro_2_01", False),
+        ]
 
 
 # Simple identifier-based mappings
@@ -67,12 +114,21 @@ async def qemit(q: asyncio.Queue[Event]) -> None:
 
 
 async def process(q: asyncio.Queue[Event], n: int) -> None:
+    master = Master()
     while True:
         event = await q.get()
         match event:
             case Event(ident, state):
                 logger.debug("%d - incoming ident %s - state %s", n, ident, state)
                 if found := _MAPPINGS.get(ident):
+                    try:
+                        entry = next(filter(lambda e: e.identifier() == found, master._entries))
+                    except StopIteration:
+                        pass
+                    else:
+                        # TODO: deal with event here!
+                        pass
+
                     logger.debug("%d - outgoing ident %s - state %s", n, found, state)
                     await q.put(Event(found, state))
         q.task_done()
