@@ -1,3 +1,4 @@
+import abc
 import asyncio
 import dataclasses
 import enum
@@ -33,51 +34,56 @@ class Event:
     state: bool
 
 
+class EventHandler(typing.Protocol):
+    def handle(self, event: Event) -> None:
+        """Handle an incoming event"""
+
+
+class HasIdentifier(typing.Protocol):
+    @abc.abstractmethod
+    def identifier(self) -> Identifier:
+        """Can generate an identifier"""
+
+
 @dataclasses.dataclass
-class Base:
+class IO(EventHandler, HasIdentifier):
     name: str
     state: bool
 
-    def _event_type(self) -> EventType:
-        raise NotADirectoryError()
+    def handle(self, event: Event) -> None:
+        pass
 
     def identifier(self) -> Identifier:
-        return Identifier("shady", self._event_type(), self.name)
+        # TODO: fix device identifier
+        return Identifier("shady", EventType.IO, self.name)
 
 
 @dataclasses.dataclass
-class IO(Base):
-    def _event_type(self) -> EventType:
-        return EventType.IO
+class PushButton(EventHandler, HasIdentifier):
+    name: str
+    state: bool
+
+    def handle(self, event: Event) -> None:
+        pass
+
+    def identifier(self) -> Identifier:
+        return Identifier("shady", EventType.PUSH_BUTTON, self.name)
 
 
 @dataclasses.dataclass
-class PushButton(Base):
-    def _event_type(self) -> EventType:
-        return EventType.PUSH_BUTTON
+class Light(EventHandler, HasIdentifier):
+    name: str
+    state: bool
 
+    def handle(self, event: Event) -> None:
+        pass
 
-@dataclasses.dataclass
-class Light(Base):
-    def _event_type(self) -> EventType:
-        return EventType.LIGHT
+    def identifier(self) -> Identifier:
+        return Identifier("shady", EventType.LIGHT, self.name)
 
 
 Entity = PushButton | Light
 Entry = IO | Entity
-
-
-class Master:
-    """Main master controlling flow of events"""
-
-    def __init__(self) -> None:
-        self._entries = [
-            IO("di_1_01", False),
-            PushButton("office", False),
-            Light("office", False),
-            IO("ro_2_01", False),
-        ]
-
 
 # Simple identifier-based mappings
 _MAPPINGS: typing.Dict[Identifier, Identifier] = {
@@ -85,6 +91,38 @@ _MAPPINGS: typing.Dict[Identifier, Identifier] = {
     Identifier("shady", EventType.PUSH_BUTTON, "office"): Identifier("shady", EventType.LIGHT, "office"),
     Identifier("shady", EventType.LIGHT, "office"): Identifier("shady", EventType.IO, "ro_2_01"),
 }
+
+
+class Master:
+    """Main master controlling flow of events"""
+
+    def __init__(self, queue: asyncio.Queue[Event]) -> None:
+        self._entries = [
+            IO("di_1_01", False),
+            PushButton("office", False),
+            Light("office", False),
+            IO("ro_2_01", False),
+        ]
+        self._queue = queue
+
+    async def run(self) -> None:
+        while True:
+            event = await self._queue.get()
+            match event:
+                case Event(ident, state):
+                    logger.debug("incoming ident %s - state %s", ident, state)
+                    if found := _MAPPINGS.get(ident):
+                        try:
+                            entry = next(filter(lambda e: e.identifier() == found, self._entries))
+                        except StopIteration:
+                            pass
+                        else:
+                            # TODO: deal with event here!
+                            pass
+
+                        logger.debug("outgoing ident %s - state %s", found, state)
+                        await self._queue.put(Event(found, state))
+            self._queue.task_done()
 
 
 async def emit() -> typing.AsyncGenerator[Event, None]:
@@ -113,34 +151,34 @@ async def qemit(q: asyncio.Queue[Event]) -> None:
         await asyncio.sleep(1)
 
 
-async def process(q: asyncio.Queue[Event], n: int) -> None:
-    master = Master()
-    while True:
-        event = await q.get()
-        match event:
-            case Event(ident, state):
-                logger.debug("%d - incoming ident %s - state %s", n, ident, state)
-                if found := _MAPPINGS.get(ident):
-                    try:
-                        entry = next(filter(lambda e: e.identifier() == found, master._entries))
-                    except StopIteration:
-                        pass
-                    else:
-                        # TODO: deal with event here!
-                        pass
+# async def process(q: asyncio.Queue[Event], n: int) -> None:
+#     master = Master()
+#     while True:
+#         event = await q.get()
+#         match event:
+#             case Event(ident, state):
+#                 logger.debug("%d - incoming ident %s - state %s", n, ident, state)
+#                 if found := _MAPPINGS.get(ident):
+#                     try:
+#                         entry = next(filter(lambda e: e.identifier() == found, master._entries))
+#                     except StopIteration:
+#                         pass
+#                     else:
+#                         # TODO: deal with event here!
+#                         pass
 
-                    logger.debug("%d - outgoing ident %s - state %s", n, found, state)
-                    await q.put(Event(found, state))
-        q.task_done()
+#                     logger.debug("%d - outgoing ident %s - state %s", n, found, state)
+#                     await q.put(Event(found, state))
+#         q.task_done()
 
 
 async def run() -> None:
     queue = asyncio.Queue()
+    master = Master(queue)
     await asyncio.gather(
         *[
             qemit(queue),
-            process(queue, 0),
-            process(queue, 1),
+            master.run(),
         ]
     )
 
