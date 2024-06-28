@@ -35,6 +35,7 @@ class Event:
 
 
 class EventHandler(typing.Protocol):
+    @abc.abstractmethod
     def handle(self, event: Event) -> None:
         """Handle an incoming event"""
 
