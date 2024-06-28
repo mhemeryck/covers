@@ -118,7 +118,7 @@ class Master:
                             pass
                         else:
                             # TODO: deal with event here!
-                            pass
+                            logger.debug("%s", entry)
 
                         logger.debug("outgoing ident %s - state %s", found, state)
                         await self._queue.put(Event(found, state))
