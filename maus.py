@@ -5,7 +5,11 @@ import enum
 import logging
 import typing
 
+# TODO: get config from CLI
+WATCH_DIRECTORY = "./fixtures"
+
 logger = logging.getLogger(__name__)
+
 
 # TODO: move to global logging
 logging.basicConfig(
@@ -23,8 +27,8 @@ class EventType(enum.StrEnum):
 @dataclasses.dataclass(frozen=True)
 class Identifier:
     device_name: str
-    event_type: EventType
     name: str
+    event_type: EventType
 
 
 @dataclasses.dataclass
@@ -63,7 +67,7 @@ class IO(EventHandler, HasIdentifier):
 
     def identifier(self) -> Identifier:
         # TODO: fix device identifier
-        return Identifier("shady", EventType.IO, self.name)
+        return Identifier("shady", self.name, EventType.IO)
 
 
 @dataclasses.dataclass
@@ -81,7 +85,7 @@ class PushButton(EventHandler, HasIdentifier):
                 logger.warning("%s can't handle event %s", self, event)
 
     def identifier(self) -> Identifier:
-        return Identifier("shady", EventType.PUSH_BUTTON, self.name)
+        return Identifier("shady", self.name, EventType.PUSH_BUTTON)
 
 
 @dataclasses.dataclass
@@ -99,15 +103,15 @@ class Light(EventHandler, HasIdentifier):
                 logger.warning("%s can't handle event %s", self, event)
 
     def identifier(self) -> Identifier:
-        return Identifier("shady", EventType.LIGHT, self.name)
+        return Identifier("shady", self.name, EventType.LIGHT)
 
 
 Entity = PushButton | Light
 Entry = IO | Entity
 
 
-class Master:
-    """Main master controlling flow of events"""
+class Maus:
+    """Main controller for the flow of events"""
 
     def __init__(self, queue: asyncio.Queue[Event]) -> None:
         # TODO: get config from elsewhere
@@ -120,9 +124,9 @@ class Master:
         # TODO: config from elsewhere
         # TODO: support for N-to-1 mappings
         self._config: typing.Mapping[Identifier, Identifier] = {
-            Identifier("shady", EventType.IO, "di_1_01"): Identifier("shady", EventType.PUSH_BUTTON, "office"),
-            Identifier("shady", EventType.PUSH_BUTTON, "office"): Identifier("shady", EventType.LIGHT, "office"),
-            Identifier("shady", EventType.LIGHT, "office"): Identifier("shady", EventType.IO, "ro_2_01"),
+            Identifier("shady", "di_1_01", EventType.IO): Identifier("shady", "office", EventType.PUSH_BUTTON),
+            Identifier("shady", "office", EventType.PUSH_BUTTON): Identifier("shady", "office", EventType.LIGHT),
+            Identifier("shady", "office", EventType.LIGHT): Identifier("shady", "ro_2_01", EventType.IO),
         }
         self._queue = queue
 
@@ -151,32 +155,3 @@ class Master:
                 logger.debug("next handler: %s", handler)
                 await handler.handle(event)
             self._queue.task_done()
-
-
-async def qemit(q: asyncio.Queue[Event]) -> None:
-    count = 0
-    while count < 10:
-        device_name = "shady" if count != 7 else "slim"
-        await q.put(
-            Event(
-                Identifier(device_name, EventType.IO, "di_1_01"),
-                count % 2 == 0,
-            )
-        )
-        count += 1
-        await asyncio.sleep(1)
-
-
-async def run() -> None:
-    queue = asyncio.Queue()
-    master = Master(queue)
-    await asyncio.gather(
-        *[
-            qemit(queue),
-            master.run(),
-        ]
-    )
-
-
-if __name__ == "__main__":
-    asyncio.run(run())
