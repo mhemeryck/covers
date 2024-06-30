@@ -59,37 +59,17 @@ class HasIdentifier(typing.Protocol):
         """Can generate an identifier"""
 
 
-class IO(EventHandler, HasIdentifier):
+class IO:
     PAYLOAD_ON = "1"
     PAYLOAD_OFF = "0"
 
-    # name: str
-    # state: bool
-
-    def __init__(self, filename: str, name: str, state: bool) -> None:
+    def __init__(self, filename: str, state: bool) -> None:
         self._filename = filename
-        self._name = name
         self._state = state
 
         self._state_lock = asyncio.Lock()
         self._read_file_handle = None
         self._write_file_handle = None
-
-    async def handle(self, event: Event) -> typing.Iterable[Event]:
-        match event:
-            case Event(Identifier(_, EventType.LIGHT, _), payload):
-                self.state = payload
-                logger.debug("writing to do something to the light!")
-                await self.write(payload)
-                # Return next event
-                return [Event(self.identifier(), payload)]
-            case _:
-                logger.warning("%s can't handle event %s", self, event)
-                return []
-
-    def identifier(self) -> Identifier:
-        # TODO: fix device identifier
-        return Identifier("shady", self._name, EventType.IO)
 
     async def _get_write_file_handle(self) -> AsyncTextIOWrapper:
         if self._write_file_handle is None:
@@ -125,7 +105,6 @@ class IO(EventHandler, HasIdentifier):
             fh = await self._get_write_file_handle()
             await fh.seek(0)
             await fh.write(f"{payload}\n")
-            # await fh.writelines([payload])
             await fh.flush()
 
 
@@ -136,7 +115,7 @@ class PushButton(EventHandler, HasIdentifier):
 
     async def handle(self, event: Event) -> typing.Iterable[Event]:
         match event:
-            case Event(Identifier(_, EventType.IO, _), payload):
+            case Event(Identifier(_, _, EventType.IO), payload):
                 self.state = payload
                 return [Event(self.identifier(), payload)]
             case _:
@@ -154,7 +133,7 @@ class Light(EventHandler, HasIdentifier):
 
     async def handle(self, event: Event) -> typing.Iterable[Event]:
         match event:
-            case Event(Identifier(_, EventType.PUSH_BUTTON, _), payload):
+            case Event(Identifier(_, _, EventType.PUSH_BUTTON), payload):
                 self.state = payload
                 return [Event(self.identifier(), payload)]
             case _:
@@ -169,23 +148,46 @@ Entity = PushButton | Light
 Entry = IO | Entity
 
 
-class FileMonitorMixin:
+class FileMonitor(EventHandler):
     """Functionality specifically for SysFS integration"""
 
     _FILENAME_PATTERN = re.compile(
         r"(.*)/io_group(1|2|3)/(?P<device_fmt>di|do|ro)_(?P<io_group>1|2|3)_(?P<number>\d{2})/(di|do|ro)_value$"
     )
 
-    def _crawl(self, folder: pathlib.Path) -> typing.Mapping[pathlib.Path, IO]:
+    def __init__(self, folder: str) -> None:
+        self._folder = folder
+        self._io_for_filename, self._io_for_ident, self._ident_for_filename = self._crawl(pathlib.Path(folder))
+
+    @staticmethod
+    def _crawl(
+        folder: pathlib.Path,
+    ) -> typing.Tuple[
+        typing.Mapping[pathlib.Path, IO],
+        typing.Mapping[Identifier, IO],
+        typing.Mapping[pathlib.Path, Identifier],
+    ]:
+        """
+        3 mappings to support all sorts of lookups:
+        1. absolute path to IO
+        1. identifier to IO
+        1. absolute path to identifier
+        """
         io_for_filename = {}
+        io_for_ident = {}
+        ident_for_filename = {}
         for root, _, files in folder.walk():
             for f in files:
                 filename = root / f
-                if (match := FileMonitorMixin._FILENAME_PATTERN.match(str(filename))) and match is not None:
+                if (match := FileMonitor._FILENAME_PATTERN.match(str(filename))) and match is not None:
                     full_path = filename.resolve()
                     name = "{device_fmt}_{io_group}_{number}".format(**match.groupdict())
-                    io_for_filename[full_path] = IO(str(full_path), name, False)
-        return io_for_filename
+                    ident = Identifier("shady", name, EventType.IO)
+
+                    io_for_filename[full_path] = io_for_ident[ident] = IO(str(full_path), False)
+                    # TODO: fix device name
+                    ident_for_filename[full_path] = ident
+        return io_for_filename, io_for_ident, ident_for_filename
 
     @staticmethod
     def io_filter(change: watchfiles.Change, path: str) -> bool:
@@ -193,29 +195,47 @@ class FileMonitorMixin:
             path.endswith(f"{ending}_value") for ending in ("di", "do", "ro")
         )
 
-    async def _watch(self, folder: pathlib.Path) -> typing.AsyncGenerator[Event, None]:
-        async for event in watchfiles.awatch(folder, force_polling=True, watch_filter=FileMonitorMixin.io_filter):
+    async def watch(self) -> typing.AsyncGenerator[Event, None]:
+        async for event in watchfiles.awatch(str(self._folder), force_polling=True, watch_filter=FileMonitor.io_filter):
             logger.debug(event)
             for _, filename in tuple(event):
                 # logger.debug(filename)
-                device = self._devices_for_filename[os.path.abspath(filename)]
-                io: IO
+                full_path = pathlib.Path(filename).resolve()
+                io = self._io_for_filename[full_path]
                 # logger.debug(device)
-                state = await device.read()
+                state = await io.read()
                 # logger.debug(device)
-                yield Event(io.identifier(), state)
+                ident = self._ident_for_filename[full_path]
+                yield Event(ident, state)
+
+    async def run(self, queue: asyncio.Queue[Event]) -> None:
+        async for event in self.watch():
+            await queue.put(event)
+
+    async def handle(self, event: Event) -> typing.Iterable[Event]:
+        match event:
+            case Event(ident, payload):
+                try:
+                    io = self._io_for_ident[ident]
+                except KeyError:
+                    logger.warning("no IO for given event %s", event)
+                else:
+                    await io.write(payload)
+            case _:
+                logger.warning("%s can't handle event %s", self, event)
+        return []
 
 
-class Maus(FileMonitorMixin):
+class Maus:
     """Main controller for the flow of events"""
 
     def __init__(self, queue: asyncio.Queue[Event]) -> None:
         # TODO: get config from elsewhere
         self._entries = [
-            IO("di_1_01", False),
+            # IO("di_1_01", False),
             PushButton("office", False),
             Light("office", False),
-            IO("ro_2_01", False),
+            # IO("ro_2_01", False),
         ]
         # TODO: config from elsewhere
         # TODO: support for N-to-1 mappings
@@ -226,7 +246,7 @@ class Maus(FileMonitorMixin):
         }
         self._queue = queue
 
-    def _next_handlers(self, event: Event) -> typing.Generator[Entry, None, None]:
+    def _next_handlers(self, event: Event) -> typing.Generator[EventHandler, None, None]:
         """Find the set of entries for a given event based in the identifier and the config"""
         match event:
             case Event(ident, _):
@@ -251,6 +271,7 @@ class Maus(FileMonitorMixin):
 
         while True:
             event = await self._queue.get()
+            logger.debug("got event %s", event)
             for handler in self._next_handlers(event):
                 logger.debug("next handler: %s", handler)
                 next_events = await handler.handle(event)
@@ -258,3 +279,19 @@ class Maus(FileMonitorMixin):
                     *(push(e) for e in next_events),
                 )
             self._queue.task_done()
+
+
+async def main() -> None:
+    queue = asyncio.Queue()
+    maus = Maus(queue)
+    file_monitor = FileMonitor(WATCH_DIRECTORY)
+    await asyncio.gather(
+        *[
+            maus.run(),
+            file_monitor.run(queue),
+        ]
+    )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
