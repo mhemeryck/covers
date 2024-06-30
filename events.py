@@ -106,13 +106,6 @@ class Light(EventHandler, HasIdentifier):
 Entity = PushButton | Light
 Entry = IO | Entity
 
-# # Simple identifier-based mappings
-# _MAPPINGS: typing.Dict[Identifier, Identifier] = {
-#     Identifier("shady", EventType.IO, "di_1_01"): Identifier("shady", EventType.PUSH_BUTTON, "office"),
-#     Identifier("shady", EventType.PUSH_BUTTON, "office"): Identifier("shady", EventType.LIGHT, "office"),
-#     Identifier("shady", EventType.LIGHT, "office"): Identifier("shady", EventType.IO, "ro_2_01"),
-# }
-
 
 class Master:
     """Main master controlling flow of events"""
@@ -158,33 +151,7 @@ class Master:
             for handler in self._next_handlers(event):
                 logger.debug("next handler: %s", handler)
                 await handler.handle(event)
-            # match event:
-            #     case Event(ident, state):
-            #         logger.debug("incoming ident %s - state %s", ident, state)
-            #         if found := _MAPPINGS.get(ident):
-            #             try:
-            #                 entry = next(filter(lambda e: e.identifier() == found, self._entries))
-            #             except StopIteration:
-            #                 pass
-            #             else:
-            #                 # TODO: deal with event here!
-            #                 logger.debug("%s", entry)
-
-            #             logger.debug("outgoing ident %s - state %s", found, state)
-            #             await self._queue.put(Event(found, state))
             self._queue.task_done()
-
-
-async def emit() -> typing.AsyncGenerator[Event, None]:
-    """Randomly emit some IO events to check how we could process those"""
-    count = 0
-    while True:
-        yield Event(
-            Identifier("shady", EventType.IO, "di_1_01"),
-            count == 1,
-        )
-        count = (count + 1) % 2
-        await asyncio.sleep(1)
 
 
 async def qemit(q: asyncio.Queue[Event]) -> None:
@@ -199,27 +166,6 @@ async def qemit(q: asyncio.Queue[Event]) -> None:
         )
         count += 1
         await asyncio.sleep(1)
-
-
-# async def process(q: asyncio.Queue[Event], n: int) -> None:
-#     master = Master()
-#     while True:
-#         event = await q.get()
-#         match event:
-#             case Event(ident, state):
-#                 logger.debug("%d - incoming ident %s - state %s", n, ident, state)
-#                 if found := _MAPPINGS.get(ident):
-#                     try:
-#                         entry = next(filter(lambda e: e.identifier() == found, master._entries))
-#                     except StopIteration:
-#                         pass
-#                     else:
-#                         # TODO: deal with event here!
-#                         pass
-
-#                     logger.debug("%d - outgoing ident %s - state %s", n, found, state)
-#                     await q.put(Event(found, state))
-#         q.task_done()
 
 
 async def run() -> None:
