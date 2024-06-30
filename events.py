@@ -36,7 +36,7 @@ class Event:
 
 class EventHandler(typing.Protocol):
     @abc.abstractmethod
-    def handle(self, event: Event) -> None:
+    async def handle(self, event: Event) -> None:
         """Handle an incoming event"""
 
 
@@ -48,11 +48,19 @@ class HasIdentifier(typing.Protocol):
 
 @dataclasses.dataclass
 class IO(EventHandler, HasIdentifier):
+    queue: asyncio.Queue
     name: str
     state: bool
 
-    def handle(self, event: Event) -> None:
-        pass
+    async def handle(self, event: Event) -> None:
+        match event:
+            case Event(Identifier(_, EventType.LIGHT, _), payload):
+                self.state = payload
+                # At this point we probably also need to write something back ...
+                await self.queue.put(Event(self.identifier(), payload))
+                logger.debug("writing to do something to the light!")
+            case _:
+                logger.warning("%s can't handle event %s", self, event)
 
     def identifier(self) -> Identifier:
         # TODO: fix device identifier
@@ -61,11 +69,17 @@ class IO(EventHandler, HasIdentifier):
 
 @dataclasses.dataclass
 class PushButton(EventHandler, HasIdentifier):
+    queue: asyncio.Queue
     name: str
     state: bool
 
-    def handle(self, event: Event) -> None:
-        pass
+    async def handle(self, event: Event) -> None:
+        match event:
+            case Event(Identifier(_, EventType.IO, _), payload):
+                self.state = payload
+                await self.queue.put(Event(self.identifier(), payload))
+            case _:
+                logger.warning("%s can't handle event %s", self, event)
 
     def identifier(self) -> Identifier:
         return Identifier("shady", EventType.PUSH_BUTTON, self.name)
@@ -73,11 +87,17 @@ class PushButton(EventHandler, HasIdentifier):
 
 @dataclasses.dataclass
 class Light(EventHandler, HasIdentifier):
+    queue: asyncio.Queue
     name: str
     state: bool
 
-    def handle(self, event: Event) -> None:
-        pass
+    async def handle(self, event: Event) -> None:
+        match event:
+            case Event(Identifier(_, EventType.PUSH_BUTTON, _), payload):
+                self.state = payload
+                await self.queue.put(Event(self.identifier(), payload))
+            case _:
+                logger.warning("%s can't handle event %s", self, event)
 
     def identifier(self) -> Identifier:
         return Identifier("shady", EventType.LIGHT, self.name)
@@ -86,43 +106,72 @@ class Light(EventHandler, HasIdentifier):
 Entity = PushButton | Light
 Entry = IO | Entity
 
-# Simple identifier-based mappings
-_MAPPINGS: typing.Dict[Identifier, Identifier] = {
-    Identifier("shady", EventType.IO, "di_1_01"): Identifier("shady", EventType.PUSH_BUTTON, "office"),
-    Identifier("shady", EventType.PUSH_BUTTON, "office"): Identifier("shady", EventType.LIGHT, "office"),
-    Identifier("shady", EventType.LIGHT, "office"): Identifier("shady", EventType.IO, "ro_2_01"),
-}
+# # Simple identifier-based mappings
+# _MAPPINGS: typing.Dict[Identifier, Identifier] = {
+#     Identifier("shady", EventType.IO, "di_1_01"): Identifier("shady", EventType.PUSH_BUTTON, "office"),
+#     Identifier("shady", EventType.PUSH_BUTTON, "office"): Identifier("shady", EventType.LIGHT, "office"),
+#     Identifier("shady", EventType.LIGHT, "office"): Identifier("shady", EventType.IO, "ro_2_01"),
+# }
 
 
 class Master:
     """Main master controlling flow of events"""
 
     def __init__(self, queue: asyncio.Queue[Event]) -> None:
+        # TODO: get config from elsewhere
         self._entries = [
-            IO("di_1_01", False),
-            PushButton("office", False),
-            Light("office", False),
-            IO("ro_2_01", False),
+            IO(queue, "di_1_01", False),
+            PushButton(queue, "office", False),
+            Light(queue, "office", False),
+            IO(queue, "ro_2_01", False),
         ]
+        # TODO: config from elsewhere
+        # TODO: support for N-to-1 mappings
+        self._config: typing.Mapping[Identifier, Identifier] = {
+            Identifier("shady", EventType.IO, "di_1_01"): Identifier("shady", EventType.PUSH_BUTTON, "office"),
+            Identifier("shady", EventType.PUSH_BUTTON, "office"): Identifier("shady", EventType.LIGHT, "office"),
+            Identifier("shady", EventType.LIGHT, "office"): Identifier("shady", EventType.IO, "ro_2_01"),
+        }
         self._queue = queue
 
+    def _next_handlers(self, event: Event) -> typing.Generator[Entry, None, None]:
+        """Find the set of entries for a given event based in the identifier and the config"""
+        match event:
+            case Event(ident, _):
+                try:
+                    next_ident = self._config[ident]
+                except KeyError:
+                    return
+                for entry in self._entries:
+                    if entry.identifier() == next_ident:
+                        yield entry
+
     async def run(self) -> None:
+        """
+        Handle all events coming from the queue:
+        - find the next handlers
+        - have the event handled by the entry handlers
+        - the entry handler will put things again on the queue -- to be handled again
+        """
         while True:
             event = await self._queue.get()
-            match event:
-                case Event(ident, state):
-                    logger.debug("incoming ident %s - state %s", ident, state)
-                    if found := _MAPPINGS.get(ident):
-                        try:
-                            entry = next(filter(lambda e: e.identifier() == found, self._entries))
-                        except StopIteration:
-                            pass
-                        else:
-                            # TODO: deal with event here!
-                            logger.debug("%s", entry)
+            for handler in self._next_handlers(event):
+                logger.debug("next handler: %s", handler)
+                await handler.handle(event)
+            # match event:
+            #     case Event(ident, state):
+            #         logger.debug("incoming ident %s - state %s", ident, state)
+            #         if found := _MAPPINGS.get(ident):
+            #             try:
+            #                 entry = next(filter(lambda e: e.identifier() == found, self._entries))
+            #             except StopIteration:
+            #                 pass
+            #             else:
+            #                 # TODO: deal with event here!
+            #                 logger.debug("%s", entry)
 
-                        logger.debug("outgoing ident %s - state %s", found, state)
-                        await self._queue.put(Event(found, state))
+            #             logger.debug("outgoing ident %s - state %s", found, state)
+            #             await self._queue.put(Event(found, state))
             self._queue.task_done()
 
 
