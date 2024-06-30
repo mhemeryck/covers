@@ -4,6 +4,7 @@ import dataclasses
 import enum
 import logging
 import pathlib
+import re
 import typing
 
 import aiofiles
@@ -44,8 +45,12 @@ class Event:
 
 class EventHandler(typing.Protocol):
     @abc.abstractmethod
-    async def handle(self, event: Event) -> None:
-        """Handle an incoming event"""
+    async def handle(self, event: Event) -> typing.Iterable[Event]:
+        """
+        Handle an incoming event.
+
+        The handler can responed with a series of other events to be processed in turn.
+        """
 
 
 class HasIdentifier(typing.Protocol):
@@ -58,32 +63,33 @@ class IO(EventHandler, HasIdentifier):
     PAYLOAD_ON = "1"
     PAYLOAD_OFF = "0"
 
-    queue: asyncio.Queue
-    name: str
-    state: bool
+    # name: str
+    # state: bool
 
-    def __init__(self, queue: asyncio.Queue[Event], filename: str, state: bool) -> None:
-        self._queue = queue
+    def __init__(self, filename: str, name: str, state: bool) -> None:
         self._filename = filename
+        self._name = name
         self._state = state
 
         self._state_lock = asyncio.Lock()
         self._read_file_handle = None
         self._write_file_handle = None
 
-    async def handle(self, event: Event) -> None:
+    async def handle(self, event: Event) -> typing.Iterable[Event]:
         match event:
             case Event(Identifier(_, EventType.LIGHT, _), payload):
                 self.state = payload
                 logger.debug("writing to do something to the light!")
                 await self.write(payload)
-                await self._queue.put(Event(self.identifier(), payload))
+                # Return next event
+                return [Event(self.identifier(), payload)]
             case _:
                 logger.warning("%s can't handle event %s", self, event)
+                return []
 
     def identifier(self) -> Identifier:
         # TODO: fix device identifier
-        return Identifier("shady", self.name, EventType.IO)
+        return Identifier("shady", self._name, EventType.IO)
 
     async def _get_write_file_handle(self) -> AsyncTextIOWrapper:
         if self._write_file_handle is None:
@@ -125,17 +131,17 @@ class IO(EventHandler, HasIdentifier):
 
 @dataclasses.dataclass
 class PushButton(EventHandler, HasIdentifier):
-    queue: asyncio.Queue
     name: str
     state: bool
 
-    async def handle(self, event: Event) -> None:
+    async def handle(self, event: Event) -> typing.Iterable[Event]:
         match event:
             case Event(Identifier(_, EventType.IO, _), payload):
                 self.state = payload
-                await self.queue.put(Event(self.identifier(), payload))
+                return [Event(self.identifier(), payload)]
             case _:
                 logger.warning("%s can't handle event %s", self, event)
+                return []
 
     def identifier(self) -> Identifier:
         return Identifier("shady", self.name, EventType.PUSH_BUTTON)
@@ -143,17 +149,17 @@ class PushButton(EventHandler, HasIdentifier):
 
 @dataclasses.dataclass
 class Light(EventHandler, HasIdentifier):
-    queue: asyncio.Queue
     name: str
     state: bool
 
-    async def handle(self, event: Event) -> None:
+    async def handle(self, event: Event) -> typing.Iterable[Event]:
         match event:
             case Event(Identifier(_, EventType.PUSH_BUTTON, _), payload):
                 self.state = payload
-                await self.queue.put(Event(self.identifier(), payload))
+                return [Event(self.identifier(), payload)]
             case _:
                 logger.warning("%s can't handle event %s", self, event)
+                return []
 
     def identifier(self) -> Identifier:
         return Identifier("shady", self.name, EventType.LIGHT)
@@ -166,17 +172,29 @@ Entry = IO | Entity
 class FileMonitorMixin:
     """Functionality specifically for SysFS integration"""
 
+    _FILENAME_PATTERN = re.compile(
+        r"(.*)/io_group(1|2|3)/(?P<device_fmt>di|do|ro)_(?P<io_group>1|2|3)_(?P<number>\d{2})/(di|do|ro)_value$"
+    )
 
-    def _crawl(self, folder: pathlib.Path)
+    def _crawl(self, folder: pathlib.Path) -> typing.Mapping[pathlib.Path, IO]:
+        io_for_filename = {}
+        for root, _, files in folder.walk():
+            for f in files:
+                filename = root / f
+                if (match := FileMonitorMixin._FILENAME_PATTERN.match(str(filename))) and match is not None:
+                    full_path = filename.resolve()
+                    name = "{device_fmt}_{io_group}_{number}".format(**match.groupdict())
+                    io_for_filename[full_path] = IO(str(full_path), name, False)
+        return io_for_filename
 
     @staticmethod
-    def device_filter(change: watchfiles.Change, path: str) -> bool:
+    def io_filter(change: watchfiles.Change, path: str) -> bool:
         return change == watchfiles.Change.modified and any(
             path.endswith(f"{ending}_value") for ending in ("di", "do", "ro")
         )
 
-    async def read(self, folder: pathlib.Path) -> typing.AsyncGenerator[Event, None]:
-        async for event in watchfiles.awatch(folder, force_polling=True, watch_filter=FileMonitorMixin.device_filter):
+    async def _watch(self, folder: pathlib.Path) -> typing.AsyncGenerator[Event, None]:
+        async for event in watchfiles.awatch(folder, force_polling=True, watch_filter=FileMonitorMixin.io_filter):
             logger.debug(event)
             for _, filename in tuple(event):
                 # logger.debug(filename)
@@ -188,16 +206,16 @@ class FileMonitorMixin:
                 yield Event(io.identifier(), state)
 
 
-class Maus:
+class Maus(FileMonitorMixin):
     """Main controller for the flow of events"""
 
     def __init__(self, queue: asyncio.Queue[Event]) -> None:
         # TODO: get config from elsewhere
         self._entries = [
-            IO(queue, "di_1_01", False),
-            PushButton(queue, "office", False),
-            Light(queue, "office", False),
-            IO(queue, "ro_2_01", False),
+            IO("di_1_01", False),
+            PushButton("office", False),
+            Light("office", False),
+            IO("ro_2_01", False),
         ]
         # TODO: config from elsewhere
         # TODO: support for N-to-1 mappings
@@ -227,9 +245,16 @@ class Maus:
         - have the event handled by the entry handlers
         - the entry handler will put things again on the queue -- to be handled again
         """
+
+        async def push(event: Event):
+            await self._queue.put(event)
+
         while True:
             event = await self._queue.get()
             for handler in self._next_handlers(event):
                 logger.debug("next handler: %s", handler)
-                await handler.handle(event)
+                next_events = await handler.handle(event)
+                await asyncio.gather(
+                    *(push(e) for e in next_events),
+                )
             self._queue.task_done()
