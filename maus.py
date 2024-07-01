@@ -37,6 +37,12 @@ class Name:
     def __repr__(self) -> str:
         return self.name()
 
+    def __eq__(self, other: typing.Self) -> bool:
+        return self._parts == other._parts
+
+    def __hash__(self):
+        return hash(self._parts)
+
     def name(self) -> str:
         return "/".join(self._parts)
 
@@ -53,7 +59,7 @@ class Identifier:
 @dataclasses.dataclass
 class Event:
     identifier: Identifier
-    state: bool
+    payload: typing.Any
 
 
 class EventHandler(typing.Protocol):
@@ -72,12 +78,13 @@ class HasIdentifier(typing.Protocol):
         """Can generate an identifier"""
 
 
-class IO:
+class IO(HasIdentifier):
     PAYLOAD_ON = "1"
     PAYLOAD_OFF = "0"
 
-    def __init__(self, filename: str, state: bool) -> None:
+    def __init__(self, filename: str, name: Name, state: bool) -> None:
         self._filename = filename
+        self._name = name
         self._state = state
 
         self._state_lock = asyncio.Lock()
@@ -120,6 +127,9 @@ class IO:
             await fh.write(f"{payload}\n")
             await fh.flush()
 
+    def identifier(self) -> Identifier:
+        return Identifier(self._name, EventType.IO)
+
 
 @dataclasses.dataclass
 class PushButton(EventHandler, HasIdentifier):
@@ -161,30 +171,38 @@ Entity = PushButton | Light
 Entry = IO | Entity
 
 
-class IOManager(EventHandler):
+class HasIdentifierMapping(typing.Protocol):
+    @abc.abstractmethod
+    def identifier_to_entries(self) -> typing.Mapping[Identifier, Entry]:
+        """
+        Exposes a mapping that the manager holds between a given event identifier and an entry.
+
+        The rationale is so that this can be used to link events and handlers globally together
+        """
+
+
+class IOManager(EventHandler, HasIdentifierMapping):
     """Functionality specifically for SysFS integration"""
 
     _FILENAME_PATTERN = re.compile(
         r"(.*)/io_group(1|2|3)/(?P<device_fmt>di|do|ro)_(?P<io_group>1|2|3)_(?P<number>\d{2})/(di|do|ro)_value$"
     )
 
-    def __init__(self, folder: str) -> None:
+    def __init__(self, device_name: str, folder: str, queue: asyncio.Queue[Event]) -> None:
+        self._device_name = device_name
         self._folder = folder
-        self._io_for_filename, self._io_for_ident, self._ident_for_filename = self._crawl(pathlib.Path(folder))
+        self._io_for_filename, self._io_for_ident = self._crawl(device_name, pathlib.Path(folder))
+        self._queue = queue
 
     @staticmethod
     def _crawl(
+        device_name: str,
         folder: pathlib.Path,
-    ) -> typing.Tuple[
-        typing.Mapping[pathlib.Path, IO],
-        typing.Mapping[Identifier, IO],
-        typing.Mapping[pathlib.Path, Identifier],
-    ]:
+    ) -> typing.Tuple[typing.Mapping[pathlib.Path, IO], typing.Mapping[Identifier, IO]]:
         """
-        3 mappings to support all sorts of lookups:
+        2 mappings to support all sorts of lookups:
         1. absolute path to IO
         1. identifier to IO
-        1. absolute path to identifier
         """
         io_for_filename = {}
         io_for_ident = {}
@@ -195,12 +213,9 @@ class IOManager(EventHandler):
                 if (match := IOManager._FILENAME_PATTERN.match(str(filename))) and match is not None:
                     full_path = filename.resolve()
                     name = "{device_fmt}_{io_group}_{number}".format(**match.groupdict())
-                    ident = Identifier(Name(name), EventType.IO)
-
-                    io_for_filename[full_path] = io_for_ident[ident] = IO(str(full_path), False)
-                    # TODO: fix device name
-                    ident_for_filename[full_path] = ident
-        return io_for_filename, io_for_ident, ident_for_filename
+                    io_for_filename[full_path] = io = IO(str(full_path), Name(device_name, name), False)
+                    ident_for_filename[full_path] = io.identifier()
+        return io_for_filename, io_for_ident
 
     @staticmethod
     def io_filter(change: watchfiles.Change, path: str) -> bool:
@@ -212,18 +227,18 @@ class IOManager(EventHandler):
         async for event in watchfiles.awatch(str(self._folder), force_polling=True, watch_filter=IOManager.io_filter):
             logger.debug(event)
             for _, filename in tuple(event):
-                # logger.debug(filename)
                 full_path = pathlib.Path(filename).resolve()
-                io = self._io_for_filename[full_path]
-                # logger.debug(device)
-                state = await io.read()
-                # logger.debug(device)
-                ident = self._ident_for_filename[full_path]
-                yield Event(ident, state)
+                try:
+                    io = self._io_for_filename[full_path]
+                except KeyError:
+                    logger.warning("Could not retrieve IO for %s", full_path)
+                else:
+                    state = await io.read()
+                    yield Event(io.identifier(), state)
 
-    async def run(self, queue: asyncio.Queue[Event]) -> None:
+    async def run(self) -> None:
         async for event in self.watch():
-            await queue.put(event)
+            await self._queue.put(event)
 
     async def handle(self, event: Event) -> typing.Iterable[Event]:
         match event:
@@ -237,6 +252,9 @@ class IOManager(EventHandler):
             case _:
                 logger.warning("%s can't handle event %s", self, event)
         return []
+
+    def identifier_to_entries(self) -> typing.Mapping[Identifier, Entry]:
+        return self._io_for_ident
 
 
 class EntityManager(EventHandler):
@@ -258,21 +276,9 @@ class Maus:
         # TODO: config from elsewhere
         # TODO: support for N-to-1 mappings
         self._config: typing.Mapping[Identifier, Identifier] = {
-            Identifier(Name("shady", "di_1_01"), EventType.IO): Identifier(
-                Name(
-                    "shady",
-                    "office",
-                ),
-                EventType.PUSH_BUTTON,
-            ),
-            Identifier(Name("shady", "office"), EventType.PUSH_BUTTON): Identifier(
-                Name(
-                    "shady",
-                    "office",
-                ),
-                EventType.LIGHT,
-            ),
-            Identifier(Name("shady", "office"), EventType.LIGHT): Identifier(Name("shady", "ro_2_01"), EventType.IO),
+            Identifier(Name("shady", "di_1_01"), EventType.IO): Identifier(Name("office"), EventType.PUSH_BUTTON),
+            Identifier(Name("office"), EventType.PUSH_BUTTON): Identifier(Name("office"), EventType.LIGHT),
+            Identifier(Name("office"), EventType.LIGHT): Identifier(Name("shady", "ro_2_01"), EventType.IO),
         }
         self._queue = queue
 
@@ -314,11 +320,11 @@ class Maus:
 async def main() -> None:
     queue = asyncio.Queue()
     maus = Maus(queue)
-    file_monitor = IOManager(WATCH_DIRECTORY)
+    io_manager = IOManager("shady", WATCH_DIRECTORY, queue)
     await asyncio.gather(
         *[
             maus.run(),
-            file_monitor.run(queue),
+            io_manager.run(),
         ]
     )
 
