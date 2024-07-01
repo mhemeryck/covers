@@ -30,10 +30,23 @@ class EventType(enum.StrEnum):
     LIGHT = enum.auto()
 
 
+class Name:
+    def __init__(self, *parts: str) -> None:
+        self._parts = parts
+
+    def __repr__(self) -> str:
+        return self.name()
+
+    def name(self) -> str:
+        return "/".join(self._parts)
+
+    def parts(self) -> typing.Iterable[str]:
+        return self._parts
+
+
 @dataclasses.dataclass(frozen=True)
 class Identifier:
-    device_name: str
-    name: str
+    name: Name
     event_type: EventType
 
 
@@ -115,7 +128,7 @@ class PushButton(EventHandler, HasIdentifier):
 
     async def handle(self, event: Event) -> typing.Iterable[Event]:
         match event:
-            case Event(Identifier(_, _, EventType.IO), payload):
+            case Event(Identifier(_, EventType.IO), payload):
                 self.state = payload
                 return [Event(self.identifier(), payload)]
             case _:
@@ -123,7 +136,7 @@ class PushButton(EventHandler, HasIdentifier):
                 return []
 
     def identifier(self) -> Identifier:
-        return Identifier("shady", self.name, EventType.PUSH_BUTTON)
+        return Identifier(Name(self.name), EventType.PUSH_BUTTON)
 
 
 @dataclasses.dataclass
@@ -133,7 +146,7 @@ class Light(EventHandler, HasIdentifier):
 
     async def handle(self, event: Event) -> typing.Iterable[Event]:
         match event:
-            case Event(Identifier(_, _, EventType.PUSH_BUTTON), payload):
+            case Event(Identifier(_, EventType.PUSH_BUTTON), payload):
                 self.state = payload
                 return [Event(self.identifier(), payload)]
             case _:
@@ -141,7 +154,7 @@ class Light(EventHandler, HasIdentifier):
                 return []
 
     def identifier(self) -> Identifier:
-        return Identifier("shady", self.name, EventType.LIGHT)
+        return Identifier(Name(self.name), EventType.LIGHT)
 
 
 Entity = PushButton | Light
@@ -182,7 +195,7 @@ class IOManager(EventHandler):
                 if (match := IOManager._FILENAME_PATTERN.match(str(filename))) and match is not None:
                     full_path = filename.resolve()
                     name = "{device_fmt}_{io_group}_{number}".format(**match.groupdict())
-                    ident = Identifier("shady", name, EventType.IO)
+                    ident = Identifier(Name(name), EventType.IO)
 
                     io_for_filename[full_path] = io_for_ident[ident] = IO(str(full_path), False)
                     # TODO: fix device name
@@ -245,9 +258,21 @@ class Maus:
         # TODO: config from elsewhere
         # TODO: support for N-to-1 mappings
         self._config: typing.Mapping[Identifier, Identifier] = {
-            Identifier("shady", "di_1_01", EventType.IO): Identifier("shady", "office", EventType.PUSH_BUTTON),
-            Identifier("shady", "office", EventType.PUSH_BUTTON): Identifier("shady", "office", EventType.LIGHT),
-            Identifier("shady", "office", EventType.LIGHT): Identifier("shady", "ro_2_01", EventType.IO),
+            Identifier(Name("shady", "di_1_01"), EventType.IO): Identifier(
+                Name(
+                    "shady",
+                    "office",
+                ),
+                EventType.PUSH_BUTTON,
+            ),
+            Identifier(Name("shady", "office"), EventType.PUSH_BUTTON): Identifier(
+                Name(
+                    "shady",
+                    "office",
+                ),
+                EventType.LIGHT,
+            ),
+            Identifier(Name("shady", "office"), EventType.LIGHT): Identifier(Name("shady", "ro_2_01"), EventType.IO),
         }
         self._queue = queue
 

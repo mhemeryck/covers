@@ -1,23 +1,29 @@
-push_buttons:
-  office: di_1_01
-  office_up: di_1_02
-  office_down: di_1_02
+# IO: all determined by the sysfs interface!
 
-lights:
-  office: ro_2_01
+# Entities
+entities:
+  push_buttons:
+    office: di_1_01
+    office_up: di_1_02
+    office_down: di_1_02
 
-covers:
-  office:
-    motor_up: ro_2_02
-    motor_down: ro_2_03
+  lights:
+    office: ro_2_01
 
-light_automations:
-  office:
-    push_button: "push_buttons.office"
-    light: "lights.office"
+  covers:
+    office:
+      motor_up: ro_2_02
+      motor_down: ro_2_03
 
-cover_automations:
-  office:
-    push_button_up: "push_buttons.office_up"
-    push_button_down: "push_buttons.office_down"
-    cover: "covers.office"
+# Automations
+automations:
+  lights:
+    office:
+      push_button: "push_buttons.office"
+      light: "lights.office"
+
+  covers:
+    office:
+      push_button_up: "push_buttons.office_up"
+      push_button_down: "push_buttons.office_down"
+      cover: "covers.office"
