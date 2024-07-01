@@ -148,7 +148,7 @@ Entity = PushButton | Light
 Entry = IO | Entity
 
 
-class FileMonitor(EventHandler):
+class IOManager(EventHandler):
     """Functionality specifically for SysFS integration"""
 
     _FILENAME_PATTERN = re.compile(
@@ -179,7 +179,7 @@ class FileMonitor(EventHandler):
         for root, _, files in folder.walk():
             for f in files:
                 filename = root / f
-                if (match := FileMonitor._FILENAME_PATTERN.match(str(filename))) and match is not None:
+                if (match := IOManager._FILENAME_PATTERN.match(str(filename))) and match is not None:
                     full_path = filename.resolve()
                     name = "{device_fmt}_{io_group}_{number}".format(**match.groupdict())
                     ident = Identifier("shady", name, EventType.IO)
@@ -196,7 +196,7 @@ class FileMonitor(EventHandler):
         )
 
     async def watch(self) -> typing.AsyncGenerator[Event, None]:
-        async for event in watchfiles.awatch(str(self._folder), force_polling=True, watch_filter=FileMonitor.io_filter):
+        async for event in watchfiles.awatch(str(self._folder), force_polling=True, watch_filter=IOManager.io_filter):
             logger.debug(event)
             for _, filename in tuple(event):
                 # logger.debug(filename)
@@ -224,6 +224,11 @@ class FileMonitor(EventHandler):
             case _:
                 logger.warning("%s can't handle event %s", self, event)
         return []
+
+
+class EntityManager(EventHandler):
+    async def handle(self, event: Event) -> typing.Iterable[Event]:
+        return await super().handle(event)
 
 
 class Maus:
@@ -284,7 +289,7 @@ class Maus:
 async def main() -> None:
     queue = asyncio.Queue()
     maus = Maus(queue)
-    file_monitor = FileMonitor(WATCH_DIRECTORY)
+    file_monitor = IOManager(WATCH_DIRECTORY)
     await asyncio.gather(
         *[
             maus.run(),
