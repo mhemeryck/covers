@@ -19,11 +19,11 @@ entities:
 automations:
   lights:
     office:
-      push_button: "push_buttons.office"
-      light: "lights.office"
+      push_button: office
+      light: office
 
   covers:
     office:
-      push_button_up: "push_buttons.office_up"
-      push_button_down: "push_buttons.office_down"
-      cover: "covers.office"
+      push_button_up: office_up
+      push_button_down: office_down
+      cover: office

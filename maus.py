@@ -9,6 +9,7 @@ import typing
 
 import aiofiles
 import watchfiles
+import yaml
 from aiofiles.threadpool.text import AsyncTextIOWrapper
 
 # TODO: get config from CLI
@@ -257,7 +258,64 @@ class IOManager(EventHandler, HasIdentifierMapping):
         return self._io_for_ident
 
 
+@dataclasses.dataclass
+class EntryConfig:
+    entity_name: Name
+    io_name: Name
+
+
+@dataclasses.dataclass
+class CoverConfig:
+    cover_name: Name
+    motor_up_name: Name
+    motor_down_name: Name
+
+
+@dataclasses.dataclass
+class EntityConfig:
+    push_buttons: typing.List[EntryConfig]
+    lights: typing.List[EntryConfig]
+    covers: typing.List[CoverConfig]
+
+
+@dataclasses.dataclass
+class LightAutomation:
+    name: str
+    push_button: Name
+    light: Name
+
+
+@dataclasses.dataclass
+class CoverAutomation:
+    name: str
+    push_button_up: Name
+    push_button_down: Name
+    cpver: Name
+
+
+@dataclasses.dataclass
+class AutomationConfig:
+    lights: typing.List[LightAutomation]
+    covers: typing.List[CoverAutomation]
+
+
+@dataclasses.dataclass
+class Config:
+    entities: EntityConfig
+    automations: AutomationConfig
+
+    @classmethod
+    def from_filename(cls, filename: str) -> typing.Self:
+        with open(filename, "rb") as fh:
+            data = yaml.safe_load(fh)
+            breakpoint()
+            ...
+
+
 class EntityManager(EventHandler):
+    def __init__(self) -> None:
+        pass
+
     async def handle(self, event: Event) -> typing.Iterable[Event]:
         return await super().handle(event)
 
@@ -329,5 +387,9 @@ async def main() -> None:
     )
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+# if __name__ == "__main__":
+#     asyncio.run(main())
+
+filename = "./config2.yaml"
+
+config = Config.from_filename(filename)
