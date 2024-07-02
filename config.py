@@ -56,5 +56,32 @@ class Config(pydantic.BaseModel):
             return cls(**data)
 
 
+def is_config_valid(config: Config) -> bool:
+    """Simple check to see whether names have been used consistently"""
+
+    push_buttons = [p.name for p in config.entities.push_buttons]
+    lights = [light.name for light in config.entities.lights]
+    covers = [c.name for c in config.entities.covers]
+
+    # check light automations
+    for a in config.automations.lights:
+        if a.push_button not in push_buttons:
+            return False
+        if a.light not in lights:
+            return False
+
+    # Check cover automations
+    for a in config.automations.covers:
+        if a.push_button_up not in push_buttons:
+            return False
+        if a.push_button_down not in push_buttons:
+            return False
+        if a.cover not in covers:
+            return False
+
+    return True
+
+
 filename = "./config2.yaml"
 config = Config.from_filename(filename)
+assert is_config_valid(config)
