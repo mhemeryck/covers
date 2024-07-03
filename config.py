@@ -55,33 +55,33 @@ class Config(pydantic.BaseModel):
             data = yaml.safe_load(fh)
             return cls(**data)
 
+    def is_valid(self) -> bool:
+        """
+        Simplified check: just validate whether all entities in the automations match up with the entities before
+        """
+        push_buttons = [p.name for p in self.entities.push_buttons]
+        lights = [light.name for light in self.entities.lights]
+        covers = [c.name for c in self.entities.covers]
 
-def is_config_valid(config: Config) -> bool:
-    """Simple check to see whether names have been used consistently"""
+        # check light automations
+        for a in self.automations.lights:
+            if a.push_button not in push_buttons:
+                return False
+            if a.light not in lights:
+                return False
 
-    push_buttons = [p.name for p in config.entities.push_buttons]
-    lights = [light.name for light in config.entities.lights]
-    covers = [c.name for c in config.entities.covers]
+        # Check cover automations
+        for a in self.automations.covers:
+            if a.push_button_up not in push_buttons:
+                return False
+            if a.push_button_down not in push_buttons:
+                return False
+            if a.cover not in covers:
+                return False
 
-    # check light automations
-    for a in config.automations.lights:
-        if a.push_button not in push_buttons:
-            return False
-        if a.light not in lights:
-            return False
-
-    # Check cover automations
-    for a in config.automations.covers:
-        if a.push_button_up not in push_buttons:
-            return False
-        if a.push_button_down not in push_buttons:
-            return False
-        if a.cover not in covers:
-            return False
-
-    return True
+        return True
 
 
 filename = "./config2.yaml"
 config = Config.from_filename(filename)
-assert is_config_valid(config)
+assert config.is_valid()
