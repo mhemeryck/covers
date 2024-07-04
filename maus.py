@@ -247,7 +247,26 @@ class Light(EventHandler, HasIdentifier):
         return Identifier(Name(self.name), EventType.LIGHT)
 
 
-Entity = PushButton | Light
+@dataclasses.dataclass
+class Cover(EventHandler, HasIdentifier):
+    name: str
+    state: bool
+
+    async def handle(self, event: Event) -> typing.Iterable[Event]:
+        match event:
+            # TODO handle motor events
+            case Event(Identifier(_, EventType.PUSH_BUTTON), payload):
+                self.state = payload
+                return [Event(self.identifier(), payload)]
+            case _:
+                logger.warning("%s can't handle event %s", self, event)
+                return []
+
+    def identifier(self) -> Identifier:
+        return Identifier(Name(self.name), EventType.LIGHT)
+
+
+Entity = PushButton | Light | Cover
 Entry = IO | Entity
 
 
@@ -338,14 +357,32 @@ class IOManager(EventHandler, HasIdentifierMapping):
 
 
 class EntityManager(EventHandler, HasIdentifierMapping):
-    def __init__(self, config_file: str) -> None:
+    def __init__(self, config_file: str, queue: asyncio.Queue[Event]) -> None:
         self._config = Config.from_filename(config_file)
 
     async def handle(self, event: Event) -> typing.Iterable[Event]:
         return await super().handle(event)
 
     def identifier_to_entries(self) -> typing.Mapping[Identifier, Entry]:
-        return super().identifier_to_entries()
+        mapping = {}
+        for push_button in self._config.entities.push_buttons:
+            io = Identifier(Name(*push_button.io.split("/")), EventType.IO)
+            entity = PushButton(push_button.name, False)
+            mapping[io] = entity
+
+        for light in self._config.entities.lights:
+            io = Identifier(Name(*light.io.split("/")), EventType.IO)
+            entity = Light(light.name, False)
+            mapping[io] = entity
+
+        for cover in self._config.entities.covers:
+            motor_up = Identifier(Name(*cover.motor_up.split("/")), EventType.IO)
+            motor_down = Identifier(Name(*cover.motor_down.split("/")), EventType.IO)
+            entity = Cover(cover.name, False)
+            mapping[motor_up] = entity
+            mapping[motor_down] = entity
+
+        return mapping
 
 
 class Maus:
@@ -407,7 +444,7 @@ async def main() -> None:
     queue = asyncio.Queue()
     maus = Maus(queue)
     io_manager = IOManager("shady", WATCH_DIRECTORY, queue)
-    entity_manager = EntityManager(CONFIG_FILE)
+    entity_manager = EntityManager(CONFIG_FILE, queue)
     await asyncio.gather(
         *[
             maus.run(),
