@@ -4,20 +4,20 @@
 entities:
   push_buttons:
     - name: office
-      io: di_1_01
+      io: tesla/di_1_01
     - name: office_up
-      io: di_1_02
+      io: shady/di_1_02
     - name: office_down
-      io: di_1_02
+      io: shady/di_1_02
 
   lights:
     - name: office
-      io: ro_2_01
+      io: edison/ro_2_01
 
   covers:
     - name: office
-      motor_up: ro_2_02
-      motor_down: ro_2_03
+      motor_up: shady/ro_2_02
+      motor_down: shady/ro_2_03
 
 # Automations
 automations:
