@@ -280,7 +280,11 @@ class HasIdentifierMapping(typing.Protocol):
         """
 
 
-class IOManager(EventHandler, HasIdentifierMapping):
+class EventHandlerWithIdentifierMapping(EventHandler, HasIdentifierMapping):
+    """intersection type"""
+
+
+class IOManager(EventHandlerWithIdentifierMapping):
     """Functionality specifically for SysFS integration"""
 
     _FILENAME_PATTERN = re.compile(
@@ -305,7 +309,6 @@ class IOManager(EventHandler, HasIdentifierMapping):
         """
         io_for_filename = {}
         io_for_ident = {}
-        ident_for_filename = {}
         for root, _, files in folder.walk():
             for f in files:
                 filename = root / f
@@ -313,7 +316,7 @@ class IOManager(EventHandler, HasIdentifierMapping):
                     full_path = filename.resolve()
                     name = "{device_fmt}_{io_group}_{number}".format(**match.groupdict())
                     io_for_filename[full_path] = io = IO(str(full_path), Name(device_name, name), False)
-                    ident_for_filename[full_path] = io.identifier()
+                    io_for_ident[io.identifier()] = io
         return io_for_filename, io_for_ident
 
     @staticmethod
@@ -356,26 +359,41 @@ class IOManager(EventHandler, HasIdentifierMapping):
         return self._io_for_ident
 
 
-class EntityManager(EventHandler, HasIdentifierMapping):
+class EntityManager(EventHandlerWithIdentifierMapping):
     def __init__(self, config_file: str, queue: asyncio.Queue[Event]) -> None:
         self._config = Config.from_filename(config_file)
+        self._entity_for_ident = self._entities_for_config(self._config)
+        self._queue = queue
 
     async def handle(self, event: Event) -> typing.Iterable[Event]:
-        return await super().handle(event)
+        logger.debug("handling event %s", event)
+        match event:
+            case Event(ident, _):
+                try:
+                    entity = self._entity_for_ident[ident]
+                except KeyError:
+                    logger.warning("Could not retrieve entity for ident %s", ident)
+                else:
+                    events = await entity.handle(event)
+                    return events
+            case _:
+                logger.warning("%s can't handle event %s", self, event)
+        return []
 
-    def identifier_to_entries(self) -> typing.Mapping[Identifier, Entry]:
+    @staticmethod
+    def _entities_for_config(config: Config) -> typing.Mapping[Identifier, Entity]:
         mapping = {}
-        for push_button in self._config.entities.push_buttons:
+        for push_button in config.entities.push_buttons:
             io = Identifier(Name(*push_button.io.split("/")), EventType.IO)
             entity = PushButton(push_button.name, False)
             mapping[io] = entity
 
-        for light in self._config.entities.lights:
+        for light in config.entities.lights:
             io = Identifier(Name(*light.io.split("/")), EventType.IO)
             entity = Light(light.name, False)
             mapping[io] = entity
 
-        for cover in self._config.entities.covers:
+        for cover in config.entities.covers:
             motor_up = Identifier(Name(*cover.motor_up.split("/")), EventType.IO)
             motor_down = Identifier(Name(*cover.motor_down.split("/")), EventType.IO)
             entity = Cover(cover.name, False)
@@ -384,38 +402,51 @@ class EntityManager(EventHandler, HasIdentifierMapping):
 
         return mapping
 
+    def identifier_to_entries(self) -> typing.Mapping[Identifier, Entity]:
+        return self._entity_for_ident
+
 
 class Maus:
     """Main controller for the flow of events"""
 
     def __init__(self, queue: asyncio.Queue[Event]) -> None:
         # TODO: get config from elsewhere
-        self._entries = [
-            # IO("di_1_01", False),
-            PushButton("office", False),
-            Light("office", False),
-            # IO("ro_2_01", False),
-        ]
-        # TODO: config from elsewhere
-        # TODO: support for N-to-1 mappings
-        self._config: typing.Mapping[Identifier, Identifier] = {
-            Identifier(Name("shady", "di_1_01"), EventType.IO): Identifier(Name("office"), EventType.PUSH_BUTTON),
-            Identifier(Name("office"), EventType.PUSH_BUTTON): Identifier(Name("office"), EventType.LIGHT),
-            Identifier(Name("office"), EventType.LIGHT): Identifier(Name("shady", "ro_2_01"), EventType.IO),
-        }
+        # self._entries = [
+        #     # IO("di_1_01", False),
+        #     PushButton("office", False),
+        #     Light("office", False),
+        #     # IO("ro_2_01", False),
+        # ]
+        # # TODO: config from elsewhere
+        # # TODO: support for N-to-1 mappings
+        # self._config: typing.Mapping[Identifier, Identifier] = {
+        #     Identifier(Name("shady", "di_1_01"), EventType.IO): Identifier(Name("office"), EventType.PUSH_BUTTON),
+        #     Identifier(Name("office"), EventType.PUSH_BUTTON): Identifier(Name("office"), EventType.LIGHT),
+        #     Identifier(Name("office"), EventType.LIGHT): Identifier(Name("shady", "ro_2_01"), EventType.IO),
+        # }
         self._queue = queue
+        self._handlers: typing.List[EventHandlerWithIdentifierMapping] = []
+
+    def register_handlers(self, *handlers: EventHandlerWithIdentifierMapping) -> None:
+        for handler in handlers:
+            self._handlers.append(handler)
 
     def _next_handlers(self, event: Event) -> typing.Generator[EventHandler, None, None]:
         """Find the set of entries for a given event based in the identifier and the config"""
         match event:
             case Event(ident, _):
-                try:
-                    next_ident = self._config[ident]
-                except KeyError:
-                    return
-                for entry in self._entries:
-                    if entry.identifier() == next_ident:
-                        yield entry
+                for handler in self._handlers:
+                    if ident in handler.identifier_to_entries():
+                        logger.debug("Found handler %s for ident %s", handler, ident)
+                        yield handler
+
+                # try:
+                #     next_ident = self._config[ident]
+                # except KeyError:
+                #     return
+                # for entry in self._entries:
+                #     if entry.identifier() == next_ident:
+                #         yield entry
 
     async def run(self) -> None:
         """
@@ -445,6 +476,8 @@ async def main() -> None:
     maus = Maus(queue)
     io_manager = IOManager("shady", WATCH_DIRECTORY, queue)
     entity_manager = EntityManager(CONFIG_FILE, queue)
+
+    maus.register_handlers(io_manager, entity_manager)
     await asyncio.gather(
         *[
             maus.run(),
