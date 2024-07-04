@@ -94,7 +94,9 @@ class Unispy:
         self._folder = folder
         self._devices_for_filename, self._devices_for_device_name = self._crawl(folder)
 
-    def _crawl(self, folder: str) -> typing.Tuple[typing.Dict[str, IO], typing.Dict[str, IO]]:
+    def _crawl(
+        self, folder: str
+    ) -> typing.Tuple[typing.Dict[str, IO], typing.Dict[str, IO]]:
         for_filename = {}
         for_device_name = {}
         for root, _, files in os.walk(folder):
@@ -102,12 +104,18 @@ class Unispy:
                 filename = os.path.join(root, f)
                 if (match := _FILENAME_PATTERN.match(filename)) and match is not None:
                     full_path = os.path.abspath(filename)
-                    device_name = "{device_fmt}_{io_group}_{number}".format(**match.groupdict())
-                    for_filename[full_path] = for_device_name[device_name] = IO(full_path)
+                    device_name = "{device_fmt}_{io_group}_{number}".format(
+                        **match.groupdict()
+                    )
+                    for_filename[full_path] = for_device_name[device_name] = IO(
+                        full_path
+                    )
         return for_filename, for_device_name
 
     async def read(self) -> typing.AsyncGenerator[EventType, None]:
-        async for event in watchfiles.awatch(self._folder, force_polling=True, watch_filter=device_filter):
+        async for event in watchfiles.awatch(
+            self._folder, force_polling=True, watch_filter=device_filter
+        ):
             logger.debug(event)
             for _, filename in tuple(event):
                 # logger.debug(filename)

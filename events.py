@@ -120,9 +120,15 @@ class Master:
         # TODO: config from elsewhere
         # TODO: support for N-to-1 mappings
         self._config: typing.Mapping[Identifier, Identifier] = {
-            Identifier("shady", EventType.IO, "di_1_01"): Identifier("shady", EventType.PUSH_BUTTON, "office"),
-            Identifier("shady", EventType.PUSH_BUTTON, "office"): Identifier("shady", EventType.LIGHT, "office"),
-            Identifier("shady", EventType.LIGHT, "office"): Identifier("shady", EventType.IO, "ro_2_01"),
+            Identifier("shady", EventType.IO, "di_1_01"): Identifier(
+                "shady", EventType.PUSH_BUTTON, "office"
+            ),
+            Identifier("shady", EventType.PUSH_BUTTON, "office"): Identifier(
+                "shady", EventType.LIGHT, "office"
+            ),
+            Identifier("shady", EventType.LIGHT, "office"): Identifier(
+                "shady", EventType.IO, "ro_2_01"
+            ),
         }
         self._queue = queue
 
