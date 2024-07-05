@@ -110,6 +110,11 @@ class EventType(enum.StrEnum):
     LIGHT = enum.auto()
 
 
+# TODO: we need another category to indicate direction!
+# e.g. in case of an IO state update, we don't want to interpret that as a command
+# otherwise, any read will trigger directly another write
+
+
 class Name:
     def __init__(self, *parts: str) -> None:
         self._parts = parts
@@ -397,6 +402,7 @@ class EntityManager(EventHandlerWithIdentifierMapping):
             io = Identifier(Name(*light.io.split("/")), EventType.IO)
             entity = Light(light.name, False)
             mapping[io] = entity
+        # TODO: register reverse mapping light -> io as well!
 
         for cover in config.entities.covers:
             motor_up = Identifier(Name(*cover.motor_up.split("/")), EventType.IO)
