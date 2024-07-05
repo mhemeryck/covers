@@ -171,6 +171,9 @@ class IO(HasIdentifier):
         self._read_file_handle = None
         self._write_file_handle = None
 
+    def __repr__(self) -> str:
+        return f"{self.identifier()} - {self._state}"
+
     async def _get_write_file_handle(self) -> AsyncTextIOWrapper:
         if self._write_file_handle is None:
             self._write_file_handle = await aiofiles.open(self._filename, "w")
@@ -304,8 +307,8 @@ class IOManager(EventHandlerWithIdentifierMapping):
     ) -> typing.Tuple[typing.Mapping[pathlib.Path, IO], typing.Mapping[Identifier, IO]]:
         """
         2 mappings to support all sorts of lookups:
-        1. absolute path to IO
-        1. identifier to IO
+        1. absolute path to IO: used for handling file triggers
+        1. identifier to IO: used from the outside to reach into the managed IOs
         """
         io_for_filename = {}
         io_for_ident = {}
@@ -362,6 +365,8 @@ class IOManager(EventHandlerWithIdentifierMapping):
 class EntityManager(EventHandlerWithIdentifierMapping):
     def __init__(self, config_file: str, queue: asyncio.Queue[Event]) -> None:
         self._config = Config.from_filename(config_file)
+        if not config.is_valid():
+            raise ValueError(f"Error in configuration file {config_file}")
         self._entity_for_ident = self._entities_for_config(self._config)
         self._queue = queue
 
